@@ -10,8 +10,9 @@ site:
   name: "Duke University Physics rooftop, Durham NC"
   # Geodetic latitude and longitude -- what a phone GPS reports.
   # East longitude is positive, so North Carolina is negative.
-  latitude_deg: 36.0021
-  longitude_deg: -78.9406
+  latitude_deg: 36.0011
+  longitude_deg: -78.5623
+  # Fitzpatrick Roof: 36°00'11.33"N 78°56'23.53"W
   elevation_m: 140.0          # ground ~123 m + roof
   timezone: "America/New_York"
   horizon_deg: 15.0           # roofline / tree obstruction, for context only
