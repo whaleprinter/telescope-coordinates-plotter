@@ -7,7 +7,7 @@
 # things you sweep (antenna size, integration time).
 
 site:
-  name: "Duke University Physics rooftop, Durham NC"
+  name: "Duke University Fitzpatrick Roof, Durham NC"
   # Geodetic latitude and longitude -- what a phone GPS reports.
   # East longitude is positive, so North Carolina is negative.
   latitude_deg: 36.0011
