@@ -1,0 +1,10 @@
+# Core. Versions are lower bounds -- newer is fine.
+numpy>=1.24
+pandas>=2.0
+astropy>=5.3          # coordinate frames, ERFA bindings, ephemerides
+matplotlib>=3.7       # figures
+Pillow>=9.0           # writes the animated GIF
+PyYAML>=6.0           # YAML configuration files
+
+# Tests only.
+pytest>=7.0

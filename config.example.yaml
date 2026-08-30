@@ -1,0 +1,56 @@
+# hydroline configuration
+#
+#   python3 run.py --config config.example.yaml
+#
+# Any command-line flag overrides the matching value here, so this file holds
+# the things that rarely change (where the array is) and the flags carry the
+# things you sweep (antenna size, integration time).
+
+site:
+  name: "Duke University Physics rooftop, Durham NC"
+  # Geodetic latitude and longitude -- what a phone GPS reports.
+  # East longitude is positive, so North Carolina is negative.
+  latitude_deg: 36.0021
+  longitude_deg: -78.9406
+  elevation_m: 140.0          # ground ~123 m + roof
+  timezone: "America/New_York"
+  horizon_deg: 15.0           # roofline / tree obstruction, for context only
+  # pressure_hpa: 0 disables refraction. Refraction is exactly zero at the
+  # zenith, so leave it at 0 unless you tilt the mount toward the horizon.
+  pressure_hpa: 0.0
+
+antenna:
+  # Start from a preset, then override anything.  Presets:
+  #   horn-cantenna  horn-small  horn-large
+  #   dish-1m2  dish-1m5  dish-3m  dish-4m6
+  preset: dish-1m5
+
+  # --- geometry -----------------------------------------------------------
+  # kind: dish | horn | beamwidth
+  #   dish       circular aperture, needs diameter_m
+  #   horn       rectangular aperture, needs aperture_e_m and aperture_h_m
+  #   beamwidth  you measured the pattern: give hpbw_deg directly
+  kind: dish
+  diameter_m: 1.5
+  aperture_efficiency: 0.60   # A_eff / A_geometric; 0.5-0.7 is realistic
+  beam_factor_deg: 70.0       # HPBW = factor * lambda / D
+                              # 58.4 uniform illumination, ~70 tapered feed
+
+  # --- receiver -----------------------------------------------------------
+  center_freq_hz: 1420405751.768   # the HI rest frequency
+  t_sys_k: 150.0              # LNA noise + spillover + sky + cable loss
+  rf_bandwidth_hz: 2.5e6      # total processed bandwidth
+  channel_hz: 5.0e3           # spectrometer channel -> 1.06 km/s resolution
+  integration_s: 300.0
+  n_pol: 1                    # 2 if you sum both polarisations
+  snr_threshold: 5.0
+
+  # --- pointing -----------------------------------------------------------
+  pointing_alt_deg: 90.0      # 90 = straight up, the design case
+  pointing_az_deg: 0.0
+
+observation:
+  start_utc: "auto"           # "auto" = today at 00:00 UTC, or an ISO 8601 time
+  duration_hours: 24.0        # 24 h sweeps the full circle of right ascension
+  step_minutes: 5.0
+  beam_fraction: 0.5          # 0.5 = the half-power contour is the beam edge
