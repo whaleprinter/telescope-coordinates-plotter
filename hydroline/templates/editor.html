@@ -1,0 +1,159 @@
+{% extends "_base.html" %}
+{% block title %}hydroline &mdash; editor{% endblock %}
+{% block content %}
+
+{% macro field(section, name, label, value, type='number', step='any', hint=None) %}
+<div class="field">
+  <label for="{{ section }}.{{ name }}">{{ label }}</label>
+  <input id="{{ section }}.{{ name }}" name="{{ section }}.{{ name }}" type="{{ type }}"
+         {% if type == 'number' %}step="{{ step }}"{% endif %}
+         value="{{ value if value is not none else '' }}">
+  {% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+<form method="post" action="{{ url_for('run_route') }}" id="config-form">
+
+  <fieldset>
+    <legend>Site</legend>
+    <div class="grid">
+      {{ field('site', 'name', 'Name', cfg.site.name, type='text') }}
+      {{ field('site', 'latitude_deg', 'Latitude (deg, +N)', cfg.site.latitude_deg,
+                hint='geodetic, what a GPS reports') }}
+      {{ field('site', 'longitude_deg', 'Longitude (deg, +E)', cfg.site.longitude_deg,
+                hint='west is negative') }}
+      {{ field('site', 'elevation_m', 'Elevation (m)', cfg.site.elevation_m) }}
+      {{ field('site', 'timezone', 'Timezone', cfg.site.timezone, type='text',
+                hint='IANA name, e.g. America/New_York') }}
+      {{ field('site', 'horizon_deg', 'Horizon obstruction (deg)', cfg.site.horizon_deg) }}
+      {{ field('site', 'pressure_hpa', 'Pressure (hPa)', cfg.site.pressure_hpa,
+                hint='0 disables refraction; leave at 0 for zenith pointing') }}
+      {{ field('site', 'temperature_c', 'Temperature (C)', cfg.site.temperature_c) }}
+      {{ field('site', 'relative_humidity', 'Relative humidity (0-1)', cfg.site.relative_humidity) }}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Antenna</legend>
+    <div class="grid">
+      <div class="field">
+        <label for="preset-select">Start from preset</label>
+        <select id="preset-select">
+          <option value="">(keep current values)</option>
+          {% for key in presets %}
+          <option value="{{ key }}">{{ key }} &mdash; {{ presets[key].name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {{ field('antenna', 'name', 'Name', cfg.antenna.name, type='text') }}
+      <div class="field">
+        <label for="antenna.kind">Kind</label>
+        <select id="antenna.kind" name="antenna.kind" onchange="updateKind()">
+          {% for k in ['dish', 'horn', 'beamwidth'] %}
+          <option value="{{ k }}" {{ 'selected' if cfg.antenna.kind == k }}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="grid kind-group" data-kind="dish" style="margin-top:14px">
+      {{ field('antenna', 'beam_factor_deg', 'Beam factor', cfg.antenna.beam_factor_deg,
+                hint='HPBW = factor * lambda / D; 58.4 uniform, ~70 tapered') }}
+    </div>
+    <div class="grid kind-group" data-kind="horn" style="margin-top:14px">
+      {{ field('antenna', 'aperture_e_m', 'Aperture E-plane (m)', cfg.antenna.aperture_e_m) }}
+      {{ field('antenna', 'aperture_h_m', 'Aperture H-plane (m)', cfg.antenna.aperture_h_m) }}
+      {{ field('antenna', 'horn_factor_e_deg', 'Horn factor E', cfg.antenna.horn_factor_e_deg) }}
+      {{ field('antenna', 'horn_factor_h_deg', 'Horn factor H', cfg.antenna.horn_factor_h_deg) }}
+    </div>
+    <div class="grid kind-group" data-kind="beamwidth" style="margin-top:14px">
+      {{ field('antenna', 'hpbw_deg', 'Measured HPBW (deg)', cfg.antenna.hpbw_deg) }}
+    </div>
+
+    <div class="grid" style="margin-top:14px">
+      {{ field('antenna', 'diameter_m', 'Diameter (m)', cfg.antenna.diameter_m,
+                hint='required for dish; optional for beamwidth (gives collecting area directly)') }}
+      {{ field('antenna', 'aperture_efficiency', 'Aperture efficiency (0-1)', cfg.antenna.aperture_efficiency) }}
+      {{ field('antenna', 'center_freq_hz', 'Centre frequency (Hz)', cfg.antenna.center_freq_hz) }}
+      {{ field('antenna', 't_sys_k', 'System temperature (K)', cfg.antenna.t_sys_k) }}
+      {{ field('antenna', 'rf_bandwidth_hz', 'RF bandwidth (Hz)', cfg.antenna.rf_bandwidth_hz) }}
+      {{ field('antenna', 'channel_hz', 'Spectrometer channel (Hz)', cfg.antenna.channel_hz) }}
+      {{ field('antenna', 'integration_s', 'Integration time (s)', cfg.antenna.integration_s) }}
+      <div class="field">
+        <label for="antenna.n_pol">Polarisations</label>
+        <select id="antenna.n_pol" name="antenna.n_pol">
+          <option value="1" {{ 'selected' if cfg.antenna.n_pol == 1 }}>1</option>
+          <option value="2" {{ 'selected' if cfg.antenna.n_pol == 2 }}>2</option>
+        </select>
+      </div>
+      {{ field('antenna', 'radiometer_factor', 'Radiometer factor K_s', cfg.antenna.radiometer_factor) }}
+      {{ field('antenna', 'snr_threshold', 'Detection threshold (sigma)', cfg.antenna.snr_threshold) }}
+      {{ field('antenna', 'pointing_alt_deg', 'Pointing altitude (deg)', cfg.antenna.pointing_alt_deg,
+                hint='90 = straight up') }}
+      {{ field('antenna', 'pointing_az_deg', 'Pointing azimuth (deg)', cfg.antenna.pointing_az_deg) }}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Observation window</legend>
+    <div class="grid">
+      {{ field('observation', 'start_utc', 'Start (UTC, ISO 8601 or "auto")',
+                cfg.observation.start_utc, type='text') }}
+      {{ field('observation', 'duration_hours', 'Duration (hours)', cfg.observation.duration_hours) }}
+      {{ field('observation', 'step_minutes', 'Step (minutes)', cfg.observation.step_minutes) }}
+      {{ field('observation', 'beam_fraction', 'Beam edge fraction of HPBW',
+                cfg.observation.beam_fraction, hint='0.5 = half-power contour') }}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Output</legend>
+    <div class="grid">
+      <div class="field">
+        <label for="theme">Plot theme</label>
+        <select id="theme" name="theme">
+          {% for t in themes %}
+          <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </fieldset>
+
+  <div class="actions">
+    <button type="submit">Run &rarr;</button>
+    <span class="hint" id="run-hint">Saves this configuration to {{ config_path }} and
+      re-runs the full pipeline (can take up to a minute with figures and the animation).</span>
+  </div>
+</form>
+
+<script>
+const PRESETS = {{ preset_fields | tojson }};
+
+function updateKind() {
+  const kind = document.getElementById('antenna.kind').value;
+  document.querySelectorAll('.kind-group').forEach(el => {
+    el.hidden = el.dataset.kind !== kind;
+  });
+}
+
+document.getElementById('preset-select').addEventListener('change', (e) => {
+  const key = e.target.value;
+  if (!key) return;
+  const preset = PRESETS[key];
+  for (const [name, value] of Object.entries(preset)) {
+    const input = document.getElementById('antenna.' + name);
+    if (input && value !== null && value !== undefined) input.value = value;
+  }
+  updateKind();
+});
+
+document.getElementById('config-form').addEventListener('submit', () => {
+  document.getElementById('run-hint').textContent = 'Running…';
+});
+
+updateKind();
+</script>
+{% endblock %}

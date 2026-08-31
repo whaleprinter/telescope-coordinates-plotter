@@ -103,6 +103,22 @@ python3 run.py --config config.example.yaml --theme light
 every flag. `--save-config my.yaml` writes out the fully resolved configuration
 so a run is reproducible.
 
+### Interactive web UI
+
+```bash
+python3 -m pip install flask   # not needed for the CLI, only this
+python3 webui.py
+```
+
+Opens a form at `http://127.0.0.1:5000` pre-filled from `config.local.yaml`
+(seeded from `config.example.yaml` the first time you run it). Edit any site,
+antenna or observation field and hit **Run**: it saves the edits back to that
+file and re-executes the full pipeline, then shows the regenerated
+`report.html` in place. `--config` points it at a different working file;
+`--port` and `--host` control where it listens. It's a local dev tool with no
+authentication — don't point `--host` at anything but `127.0.0.1` unless you
+know what that exposes.
+
 ### Configuration file
 
 `config.example.yaml` is commented line by line. Command-line flags override it,
@@ -204,6 +220,7 @@ relative to. `pointing_track.csv` carries, for every time step, the correction
 
 ```
 run.py                     entry point (same as python3 -m hydroline)
+webui.py                   interactive config editor (python3 webui.py)
 config.example.yaml        commented configuration
 data/sources_1420.csv      the source catalogue — edit or replace
 hydroline/
@@ -214,6 +231,8 @@ hydroline/
   catalog.py               catalogue loading + solar-system ephemeris
   analysis.py              transits, detectability, galactic crossings
   plots.py                 figures and the animation
+  webapp.py                Flask app behind webui.py
+  templates/                 its HTML form and result pages
   theme.py                 plot palettes
   export.py                CSV / JSON / HTML output
   cli.py                   argument parsing
