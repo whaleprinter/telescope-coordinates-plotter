@@ -96,7 +96,7 @@ python3 run.py --kind horn --aperture-e 0.9 --aperture-h 0.7 --tsys 120 --integr
 ```
 
 ```bash
-python3 run.py --config config.example.yaml --theme light
+python3 run.py --config config.example.yaml --theme dark
 ```
 
 `python3 run.py --list-antennas` prints the built-in presets; `--help` lists

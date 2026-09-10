@@ -110,7 +110,7 @@ def create_app(config_path: Path, outdir: Path) -> "Flask":
             ), 400
 
         cfg.save(app.config["CONFIG_PATH"])
-        theme = request.form.get("theme", "dark")
+        theme = request.form.get("theme", "light")
         args = _default_args(app.config["OUTDIR"], None, theme)
 
         log = io.StringIO()

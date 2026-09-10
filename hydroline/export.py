@@ -66,9 +66,35 @@ def write_summary(outdir: Path, payload: dict[str, Any]) -> Path:
 # ---------------------------------------------------------------------------
 # HTML report
 # ---------------------------------------------------------------------------
+def _theme_script(figure_theme: str) -> str:
+    """Sets the page's initial light/dark state before first paint.
+
+    Priority: a theme the viewer previously chose by hand (localStorage,
+    shared across every report opened from this browser) beats everything;
+    failing that, default to whatever theme the embedded figures were
+    actually rendered in, so the chrome and the images agree on first load
+    rather than clashing by coincidence.
+    """
+    default = "light" if figure_theme == "light" else "dark"
+    return f"""<script>
+(function () {{
+  var saved = localStorage.getItem("hydroline-report-theme");
+  var theme = saved || {default!r};
+  document.documentElement.setAttribute("data-theme", theme);
+}})();
+function toggleReportTheme() {{
+  var html = document.documentElement;
+  var next = html.getAttribute("data-theme") === "light" ? "dark" : "light";
+  html.setAttribute("data-theme", next);
+  localStorage.setItem("hydroline-report-theme", next);
+}}
+</script>"""
+
 _CSS = """
-:root{--bg:#16181c;--panel:#1a1c21;--line:#2b2e34;--ink:#fff;--ink2:#c3c2b7;
+:root,:root[data-theme="dark"]{--bg:#16181c;--panel:#1a1c21;--line:#2b2e34;--ink:#fff;--ink2:#c3c2b7;
 --muted:#8a8c93;--blue:#3987e5;--green:#199e70;--orange:#d95926}
+:root[data-theme="light"]{--bg:#fcfcfb;--panel:#ffffff;--line:#e4e2dd;--ink:#0b0b0b;--ink2:#3d3c39;
+--muted:#7a786f;--blue:#2a6fd6;--green:#0f8a5c;--orange:#c14f16}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
@@ -108,6 +134,10 @@ padding:1.5px 6px;font-size:12.5px}
 var(--orange);border-radius:8px;padding:13px 17px;margin:20px 0;font-size:13.5px;
 color:var(--ink2)}
 .note b{color:var(--ink)}
+.theme-toggle{position:fixed;top:20px;right:24px;background:var(--panel);
+color:var(--ink2);border:1px solid var(--line);border-radius:8px;
+padding:7px 14px;font-size:12.5px;cursor:pointer;z-index:10}
+.theme-toggle:hover{color:var(--ink)}
 """
 
 
@@ -156,8 +186,17 @@ def write_report(outdir: Path, config: Configuration, model: AntennaModel,
                  track: PointingTrack, det: pd.DataFrame,
                  encounters: pd.DataFrame, crossings: pd.DataFrame,
                  coverage: dict, validation: dict, ghi: pd.DataFrame,
-                 figures: dict[str, Path]) -> Path:
-    """One self-contained HTML file with the figures and tables inlined."""
+                 figures: dict[str, Path], figure_theme: str = "light") -> Path:
+    """One self-contained HTML file with the figures and tables inlined.
+
+    `figure_theme` is whichever theme (see hydroline.theme.THEMES) the
+    figures were actually rendered with. The page chrome (this function's own
+    CSS) can be toggled light/dark independently at view-time -- it's just
+    HTML and CSS -- but the figures are pre-rendered raster images baked with
+    one fixed theme, so toggling the page can't repaint them; the initial
+    toggle state instead defaults to match figure_theme, so the two agree on
+    first load. Getting light figures means re-running with a light theme.
+    """
     outdir = Path(outdir)
     a = model.antenna
     s = model.summary()
@@ -220,9 +259,13 @@ def write_report(outdir: Path, config: Configuration, model: AntennaModel,
 
     html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Zenith drift survey — {config.site.name}</title><style>{_CSS}</style>
+<title>Zenith drift survey — {config.site.name}</title>
+{_theme_script(figure_theme)}
+<style>{_CSS}</style>
 </head><body><div class="wrap">
 
+<button type="button" class="theme-toggle" onclick="toggleReportTheme()"
+        title="Switch this page between light and dark. The figures below were rendered once in a fixed theme and won't repaint.">&#9680; Theme</button>
 <h1>Zenith drift survey at 21 cm</h1>
 <p class="sub">{config.site.name} &nbsp;·&nbsp;
 {config.site.latitude_deg:+.4f}°, {config.site.longitude_deg:+.4f}°,

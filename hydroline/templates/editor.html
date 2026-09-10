@@ -115,7 +115,7 @@
         <label for="theme">Plot theme</label>
         <select id="theme" name="theme">
           {% for t in themes %}
-          <option value="{{ t }}">{{ t }}</option>
+          <option value="{{ t }}" {{ 'selected' if t == 'light' }}>{{ t }}</option>
           {% endfor %}
         </select>
       </div>

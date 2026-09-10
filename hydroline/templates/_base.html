@@ -4,12 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}hydroline{% endblock %}</title>
+<script>
+  // Set the theme before first paint, so there's no flash of the wrong
+  // colors. Falls back to the OS preference if nothing was chosen before.
+  (function () {
+    var saved = localStorage.getItem("hydroline-theme");
+    var theme = saved || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
 <style>
-  :root {
+  :root, :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #12151a; --panel: #1a1f27; --border: #2a313c; --text: #e6e9ee;
     --muted: #8a93a1; --accent: #5fb3ff; --accent-text: #06121e;
-    --error: #ff6b6b; --ok: #4ade80;
+    --error: #ff6b6b; --error-bg: #3a1a1a; --ok: #4ade80;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f7f8fa; --panel: #ffffff; --border: #d8dce2; --text: #1a1f27;
+    --muted: #6b7280; --accent: #1f6feb; --accent-text: #ffffff;
+    --error: #d1242f; --error-bg: #fdecea; --ok: #1a7f37;
   }
   * { box-sizing: border-box; }
   body {
@@ -45,21 +60,32 @@
   button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
   button:hover { filter: brightness(1.1); }
   .error {
-    background: #3a1a1a; border: 1px solid var(--error); color: var(--error);
+    background: var(--error-bg); border: 1px solid var(--error); color: var(--error);
     border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; white-space: pre-wrap;
   }
   .hint { color: var(--muted); font-size: 12px; margin: -8px 0 16px; }
   a { color: var(--accent); }
   .kind-group[hidden] { display: none; }
+  #theme-toggle { margin-left: auto; padding: 6px 12px; font-size: 12px; }
 </style>
 </head>
 <body>
 <header>
   <h1>hydroline &mdash; configuration editor</h1>
   <span class="path">{{ config_path }}</span>
+  <button type="button" id="theme-toggle" class="secondary" onclick="toggleTheme()"
+          title="Switch between light and dark">&#9680; Theme</button>
 </header>
 <main>
 {% block content %}{% endblock %}
 </main>
+<script>
+  function toggleTheme() {
+    var html = document.documentElement;
+    var next = html.getAttribute("data-theme") === "light" ? "dark" : "light";
+    html.setAttribute("data-theme", next);
+    localStorage.setItem("hydroline-theme", next);
+  }
+</script>
 </body>
 </html>
