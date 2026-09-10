@@ -8,3 +8,6 @@ PyYAML>=6.0           # YAML configuration files
 
 # Tests only.
 pytest>=7.0
+
+# Web UI only (python3 webui.py). Not needed for the CLI.
+Flask>=3.0

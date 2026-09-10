@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("output")
     g.add_argument("--outdir", type=Path, default=Path("outputs"))
     g.add_argument("--catalog", type=Path, help="alternative source CSV")
-    g.add_argument("--theme", choices=sorted(THEMES), default="dark")
+    g.add_argument("--theme", choices=sorted(THEMES), default="light")
     g.add_argument("--bodies", nargs="*", default=list(DEFAULT_BODIES),
                    help="solar-system bodies to track ('none' to skip)")
     g.add_argument("--no-plots", action="store_true")
@@ -279,7 +279,8 @@ def run(cfg: Configuration, args: argparse.Namespace) -> dict:
     write_summary(outdir, summary)
 
     report = write_report(outdir, cfg, model, track, det, enc, crossings,
-                          coverage, validation, ghi, figures)
+                          coverage, validation, ghi, figures,
+                          figure_theme=args.theme)
     say(f"\nWrote {len(written)} CSVs, {len(figures)} figures, summary.json")
     say(f"Report: {report}")
     return summary
