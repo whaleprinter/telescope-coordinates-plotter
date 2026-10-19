@@ -17,7 +17,7 @@ from .analysis import (
     sky_coverage,
 )
 from .antenna import AntennaModel
-from .catalog import DEFAULT_BODIES, load_catalog, solar_system_track
+from .catalog import DEFAULT_BODIES, DEFAULT_CATALOG, load_catalog, solar_system_track
 from .config import (
     Antenna,
     Configuration,
@@ -85,7 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("output")
     g.add_argument("--outdir", type=Path, default=Path("outputs"))
-    g.add_argument("--catalog", type=Path, help="alternative source CSV")
+    g.add_argument("--catalog", type=Path,
+                   help="use exactly this static source CSV; skips live "
+                        "database querying entirely (implies --offline for "
+                        "the catalogue, independent of IERS)")
     g.add_argument("--theme", choices=sorted(THEMES), default="light")
     g.add_argument("--bodies", nargs="*", default=list(DEFAULT_BODIES),
                    help="solar-system bodies to track ('none' to skip)")
@@ -96,7 +99,25 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--include-misses", action="store_true",
                    help="also list sources that never enter the beam")
     g.add_argument("--offline", action="store_true",
-                   help="never download IERS Earth-orientation tables")
+                   help="never touch the network: no IERS Earth-orientation "
+                        "download, and the source catalogue comes from the "
+                        "bundled static CSV instead of live databases")
+    g.add_argument("--refresh-catalog", action="store_true",
+                   help="ignore any cached live-catalogue query and re-fetch "
+                        "from NVSS/ALFALFA/SIMBAD")
+    g.add_argument("--flux-floor", type=float,
+                   help="minimum NVSS 1.4 GHz flux to fetch, in Jy "
+                        "(default: derived from the antenna's own "
+                        "sensitivity over a 24 h reference integration)")
+    g.add_argument("--flux-floor-multiplier", type=float, default=0.5,
+                   help="scales the antenna-derived flux floor; lower "
+                        "fetches more (fainter) sources")
+    g.add_argument("--no-simbad", action="store_true",
+                   help="skip SIMBAD name/type enrichment of the live "
+                        "catalogue (faster, no common names or object types)")
+    g.add_argument("--live-cache-max-age", type=float, default=90.0,
+                   help="days before a cached live-catalogue query is "
+                        "treated as stale and re-fetched")
     g.add_argument("--quiet", action="store_true")
     return p
 
@@ -146,6 +167,74 @@ def configuration_from_args(args: argparse.Namespace) -> Configuration:
     return cfg
 
 
+def _build_catalog(cfg: Configuration, args: argparse.Namespace,
+                   model: AntennaModel, track, frac: float, say):
+    """Decide where the source catalogue comes from, and build it.
+
+    Three ways this can go, in priority order:
+
+    1. ``--catalog PATH`` -- use exactly that static CSV. Never touches the
+       network, regardless of any other flag.
+    2. ``--offline`` (and no ``--catalog``) -- use the bundled static CSV
+       (``data/sources_1420.csv``). Also never touches the network.
+    3. Otherwise (the default) -- try NVSS + ALFALFA + SIMBAD via
+       :func:`hydroline.live_catalog.build_live_catalog`. If that fails for
+       any reason (astroquery not installed, no network, every service
+       down), fall back to the bundled static CSV automatically, and say
+       exactly why -- loudly, not buried in a warnings list -- so a run
+       never silently uses different data than what actually happened.
+
+    Returns ``(catalog, meta)`` where ``meta`` is a small dict recorded into
+    ``summary.json`` under ``"live_catalog"`` (``None`` when a static CSV
+    was used, so that key's presence itself indicates whether live querying
+    was attempted).
+    """
+    if args.catalog:
+        say(f"Catalogue: static file {args.catalog}")
+        return load_catalog(args.catalog), None
+
+    if args.offline:
+        say(f"Catalogue: static file {DEFAULT_CATALOG} (--offline, no "
+            f"network attempted)")
+        return load_catalog(DEFAULT_CATALOG), None
+
+    try:
+        from .live_catalog import LiveCatalogError, build_live_catalog
+    except ImportError as exc:
+        say(f"Catalogue: live querying needs astroquery, which isn't "
+            f"installed ({exc}). Falling back to the static catalogue.")
+        say(f"  Install with: {sys.executable} -m pip install astroquery")
+        return load_catalog(DEFAULT_CATALOG), None
+
+    try:
+        result = build_live_catalog(
+            track.dec_deg, frac * model.hpbw_deg, model,
+            flux_floor_jy=args.flux_floor,
+            flux_floor_multiplier=args.flux_floor_multiplier,
+            include_simbad=not args.no_simbad,
+            max_age_days=args.live_cache_max_age, refresh=args.refresh_catalog,
+            say=say,
+        )
+    except LiveCatalogError as exc:
+        say(f"Catalogue: live querying failed -- {exc}")
+        say(f"Catalogue: falling back to the static catalogue "
+            f"({DEFAULT_CATALOG})")
+        return load_catalog(DEFAULT_CATALOG), None
+
+    say(f"Catalogue: {'cache' if result.from_cache else 'live'} — "
+        f"{result.counts.get('nvss', 0)} NVSS + "
+        f"{result.counts.get('alfalfa', 0)} ALFALFA "
+        f"({result.counts.get('simbad_matched', 0)} SIMBAD-named), "
+        f"{result.counts.get('total', len(result.catalog))} total")
+    for w in result.warnings:
+        say(f"  ! {w}")
+    return result.catalog, {
+        "source": "live", "from_cache": result.from_cache,
+        "cache_path": str(result.cache_path), "counts": result.counts,
+        "warnings": result.warnings,
+    }
+
+
 def run(cfg: Configuration, args: argparse.Namespace) -> dict:
     """Execute a full analysis and write everything to ``args.outdir``."""
     say = (lambda *a: None) if args.quiet else print
@@ -171,12 +260,12 @@ def run(cfg: Configuration, args: argparse.Namespace) -> dict:
         say(f"Check   : zenith identities reproduced to "
             f"{max(validation['max_abs_dec_apparent_minus_latitude_arcmin'], validation['max_abs_ra_apparent_minus_lst_arcmin']) * 60:.2f}″  [{mark}]")
 
-    catalog = load_catalog(args.catalog)
+    frac = cfg.observation.beam_fraction
+    catalog, catalog_meta = _build_catalog(cfg, args, model, track, frac, say)
     bodies = tuple(b for b in (args.bodies or []) if b.lower() != "none")
     solar = (solar_system_track(track.times, track.location, bodies)
              if bodies else {})
 
-    frac = cfg.observation.beam_fraction
     enc = beam_encounters(track, catalog, model, solar, beam_fraction=frac,
                           include_misses=args.include_misses)
     det = detectability_table(catalog, model, track.dec_deg, solar,
@@ -253,6 +342,7 @@ def run(cfg: Configuration, args: argparse.Namespace) -> dict:
         "pointing": track.summary(),
         "validation": validation,
         "sky_coverage": coverage,
+        "live_catalog": catalog_meta,
         "counts": {
             "catalog_sources": len(catalog),
             "solar_system_bodies": len(solar),
