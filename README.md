@@ -138,6 +138,20 @@ so the file holds what rarely changes (where the array is) and the flags carry
 what you sweep. Numeric strings are coerced, so YAML's `2.5e6` footgun — which
 YAML 1.1 reads as a *string* unless you write `2.5e+6` — will not bite you.
 
+### Antenna from real parts (hardware model)
+
+Instead of a preset, the antenna can be computed from a parts list (reflector,
+feed, cables, LNA, filter, SDR) with `compute_performance.py`. It writes a
+`performance_parameters.yaml` (gain, Friis T_rec, passband, T_sys, beam, SEFD),
+a frequency-response graph, and the flux needed for a target SNR. Then:
+
+```bash
+python3 compute_performance.py
+python3 run.py --performance hardware/output/performance_parameters.yaml --snr-target 3
+```
+
+See **[HARDWARE_MODEL.md](HARDWARE_MODEL.md)** for how to use it and what to expect.
+
 ---
 
 ## What the antenna model computes

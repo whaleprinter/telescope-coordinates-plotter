@@ -5,6 +5,7 @@ astropy>=5.3          # coordinate frames, ERFA bindings, ephemerides
 matplotlib>=3.7       # figures
 Pillow>=9.0           # writes the animated GIF
 PyYAML>=6.0           # YAML configuration files
+scipy>=1.10           # Bessel functions for the hardware model's beam
 
 # Tests only.
 pytest>=7.0
