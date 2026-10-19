@@ -8,3 +8,13 @@ PyYAML>=6.0           # YAML configuration files
 
 # Tests only.
 pytest>=7.0
+
+# Web UI only (python3 webui.py). Not needed for the CLI.
+Flask>=3.0
+
+# Live catalog (NVSS/ALFALFA/SIMBAD queries -- the default source of
+# sources; --catalog or --offline skip this and need not have it installed).
+# Upper-capped: the specific kwargs this relies on (VizieR column-filter
+# syntax, add_votable_fields, explicit row_limit) have moved across
+# astroquery versions before; built and verified against 0.4.11.
+astroquery>=0.4.7,<0.5

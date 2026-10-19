@@ -525,8 +525,20 @@ def _plane_crossing_marks(h: np.ndarray, b: np.ndarray) -> list[tuple[float, flo
 # ---------------------------------------------------------------------------
 def plot_transit_timeline(encounters: pd.DataFrame, track: PointingTrack,
                           model: AntennaModel, path,
-                          theme: Theme = DARK) -> Path:
-    """Gantt-style schedule: what is inside the beam, and when."""
+                          theme: Theme = DARK, max_rows: int = 30) -> Path:
+    """Gantt-style schedule: what is inside the beam, and when.
+
+    A hand-curated catalogue of a few dozen sources rarely produces more
+    than a handful of transits a day. A live-queried one can -- measured
+    directly, ~300 sources in one beam's declination band gave over 100
+    transits in a single 24 h window, since nearly everything at the right
+    declination drifts through eventually; that's correct, not a bug, but
+    one bar per transit at this figure's fixed per-row height stops being
+    readable well before that. `max_rows` keeps the plot to the transits
+    worth looking at -- ranked by beam response (how close to the beam
+    centre the source actually got) -- rather than growing the figure
+    without bound; the full list is always in beam_encounters.csv regardless.
+    """
     path = Path(path)
     enc = (encounters[encounters["in_beam"]].copy()
            if len(encounters) else encounters)
@@ -541,6 +553,9 @@ def plot_transit_timeline(encounters: pd.DataFrame, track: PointingTrack,
             plt.close(fig)
             return path
 
+        truncated = len(enc) > max_rows
+        if truncated:
+            enc = enc.sort_values("beam_response", ascending=False).head(max_rows)
         enc = enc.sort_values("transit_hours_from_start").reset_index(drop=True)
         t0 = pd.Timestamp(track.times[0].isot)
         start = ((pd.to_datetime(enc["enter_utc"], format="mixed") - t0)
@@ -574,15 +589,25 @@ def plot_transit_timeline(encounters: pd.DataFrame, track: PointingTrack,
         cb.ax.tick_params(labelsize=7, colors=theme.ink_muted)
         cb.outline.set_edgecolor(theme.grid)
 
-        ax.set_title("Transit schedule — time inside the half-power beam",
-                     loc="left", fontsize=13, color=theme.ink,
-                     weight="semibold", pad=18)
-        ax.text(0, 1.02,
-                f"{len(enc)} passes · beam fixed at the zenith, HPBW "
-                f"{model.hpbw_deg:.1f}° · sky drifts 15.04°/hour",
-                transform=ax.transAxes, fontsize=8.2,
-                color=theme.ink_secondary)
-        fig.tight_layout()
+        fig.tight_layout(rect=(0, 0, 1, 1 - 0.72 / fig.get_figheight()))
+        subtitle = (f"{len(enc)} passes · beam fixed at the zenith, HPBW "
+                   f"{model.hpbw_deg:.1f}° · sky drifts 15.04°/hour")
+        if truncated:
+            subtitle += f" · showing the {max_rows} closest of more; see beam_encounters.csv for all"
+        # Title and subtitle are placed in figure (not axes) coordinates, at
+        # fixed INCH offsets from the top edge -- this plot's figure height
+        # varies with len(enc) (still fixed width), and axes-fraction
+        # placement changes meaning as that height changes: 0.02 axes-
+        # fraction is a tiny, safe gap on a typical handful-of-transits
+        # figure but can put the subtitle inside the title's own pad on a
+        # tall, max_rows-capped one. Fixed inch offsets keep the same
+        # physical gap between them no matter how tall the figure gets.
+        h = fig.get_figheight()
+        fig.text(0.008, 1 - 0.30 / h,
+                 "Transit schedule — time inside the half-power beam",
+                 fontsize=13, color=theme.ink, weight="semibold", va="top")
+        fig.text(0.008, 1 - 0.55 / h, subtitle, fontsize=8.2,
+                 color=theme.ink_secondary, va="top")
         fig.savefig(path, facecolor=theme.surface)
         plt.close(fig)
     return path

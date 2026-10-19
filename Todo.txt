@@ -1,0 +1,12 @@
+To Do from Dr. Gehm meeting 9/1/2026:
+--Make a system that backs out the times we need to sweep based off objects we'd like to see.
+--Ideal: ability to choose the coordinate system that is being displayed (equitorial, galactic, local) and what projection are we using to turn that spherical coordinates system into a planar projection (add a dropdown). (if i look at the sky with X coordinate system, what do i see using Y projection in the plane).
+--When does this region of the sky cross my beam?
+--Thinking about how to interface with other tools (Unix style model) bunch of program that each do one small function well and you connect them together OR it can be more monolithic. Add a programming interface for inputs and outputs.
+--Build towards the simulator that we sketched up last year but with real data and more specific details like (antenna type, amplifier temperature, etc.)
+--Take a stab at a block diagram of the entire system (all the things we need to analyze a system like the one we're bulding. Coordinate transforms, performance, database interfaces, etc.).
+--If we measure at certain times or whatever --> here is a simulated picture of what we can see. 
+--FOR NEXT TIME: full block diagram of what we would like this to look like. 
+--Given these physical parameters of the antenna, the UI would allow the user to (using a database) see what the antenna can see, get a viewing schedule, and select different things. 
+--Standard, command-line level programs for the basic conversion/transformation functions. 
+--Make a shared box to add all the files to.

@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+config.local.yaml
+projections/output/
+data/live_cache/
