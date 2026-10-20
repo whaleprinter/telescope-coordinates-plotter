@@ -1,9 +1,11 @@
-"""Hand a computed performance_parameters.yaml to the hydroline planner.
+"""Read a ``performance_parameters.yaml`` written by the separate
+``hardware_model`` program, and turn it into a hydroline :class:`Antenna`.
 
-The planner's :class:`~hydroline.config.Antenna` describes a beam and a
-T_sys; the hardware model computes both from parts.  This maps one onto the
-other, so ``run.py --performance hardware/output/performance_parameters.yaml``
-plans with the beam and noise your actual hardware produces.
+This is the only connection between the two programs, and it is a file, not
+an import: hydroline never runs or imports hardware_model.  Anything that
+writes a file with these keys would work.
+
+    python3 run.py --performance hardware_model/output/performance_parameters.yaml
 """
 from __future__ import annotations
 
@@ -11,25 +13,28 @@ import math
 from dataclasses import replace
 from pathlib import Path
 
-from ..config import Antenna
-from .params import HardwareConfigError
+from .config import Antenna
+
+
+class PerformanceFileError(ValueError):
+    pass
 
 
 def _v(block: dict, key: str, path: Path) -> float:
     try:
         return float(block[key]["value"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise HardwareConfigError(
-            f"{path}: missing {key!r} -- regenerate it with compute_performance.py") from exc
+        raise PerformanceFileError(
+            f"{path}: missing {key!r} -- regenerate it with "
+            f"hardware_model/compute_performance.py") from exc
 
 
 def antenna_from_performance(path: str | Path, base: Antenna | None = None) -> Antenna:
-    """An :class:`Antenna` with the beam, A_eff, T_sys and bandwidth of the file.
+    """An :class:`Antenna` with the file's beam, A_eff, T_sys and bandwidth.
 
-    The planner models a circular beam, so the HPBW is the geometric mean of
-    the E- and H-plane widths; the exact elliptical footprint is in the
-    hardware model's beam figure.  A_eff is carried exactly by giving the
-    equivalent diameter sqrt(4 A_eff / pi) with an efficiency of 1.
+    hydroline models a circular beam, so the HPBW is the geometric mean of the
+    E- and H-plane widths.  A_eff is carried exactly by giving the equivalent
+    diameter sqrt(4 A_eff / pi) with an aperture efficiency of 1.
     """
     import yaml
 
@@ -37,16 +42,14 @@ def antenna_from_performance(path: str | Path, base: Antenna | None = None) -> A
     data = yaml.safe_load(path.read_text()) or {}
     beam, coll = data.get("beam_pattern", {}), data.get("collection", {})
     noise, gain = data.get("noise", {}), data.get("gain", {})
-    sysb, pos = data.get("system", {}), data.get("position", {})
-    gen = data.get("generated_from", {})
+    sysb, pos, gen = data.get("system", {}), data.get("position", {}), data.get("generated_from", {})
 
     a_eff = _v(coll, "effective_area", path)
-    hpbw = math.sqrt(_v(beam, "hpbw_e_plane", path) * _v(beam, "hpbw_h_plane", path))
     return replace(
         base or Antenna(),
         name=str(gen.get("telescope") or "hardware model"),
         kind="beamwidth",
-        hpbw_deg=hpbw,
+        hpbw_deg=math.sqrt(_v(beam, "hpbw_e_plane", path) * _v(beam, "hpbw_h_plane", path)),
         diameter_m=math.sqrt(4.0 * a_eff / math.pi),
         aperture_efficiency=1.0,
         center_freq_hz=_v(gen, "center_frequency", path) * 1e6,

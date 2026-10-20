@@ -72,7 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--npol", type=int, choices=[1, 2])
     g.add_argument("--snr", type=float, help="detection threshold in sigma")
     g.add_argument("--performance", type=Path,
-                   help="performance_parameters.yaml from compute_performance.py: "
+                   help="performance_parameters.yaml written by the separate "
+                        "hardware_model program: "
                         "take the beam, A_eff, T_sys and bandwidth from the "
                         "hardware model (other antenna flags still override)")
     g.add_argument("--snr-target", type=float,
@@ -148,7 +149,7 @@ def configuration_from_args(args: argparse.Namespace) -> Configuration:
     if args.antenna:
         cfg.antenna = PRESET_ANTENNAS[args.antenna]
     if args.performance:
-        from .hardware.bridge import antenna_from_performance
+        from .performance_file import antenna_from_performance
         cfg.antenna = antenna_from_performance(args.performance, cfg.antenna)
     if args.snr_target is not None and args.snr is None:
         args.snr = args.snr_target

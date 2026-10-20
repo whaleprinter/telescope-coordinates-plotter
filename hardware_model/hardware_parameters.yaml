@@ -1,6 +1,6 @@
-# hardware_parameters.yaml -- the INPUT to compute_performance.py
+# hardware_parameters.yaml -- the INPUT to the hardware_model program
 #
-#   python3 compute_performance.py
+#   python3 hardware_model/compute_performance.py
 #
 # Basic facts about the setup, written the way datasheets give them.
 # Parameter format:   name: {value, unit, status, notes}

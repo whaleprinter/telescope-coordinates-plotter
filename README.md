@@ -1,3 +1,30 @@
+# Duke 21 cm telescope software
+
+This repository holds **three separate programs**. Each has its own folder,
+entry point and tests, and none imports another. Where one program uses
+another's result, it reads a file the other wrote.
+
+| program | question it answers | folder | run it with | docs |
+|---|---|---|---|---|
+| **hardware_model** | Given our parts, how well does the telescope work (gain, T_sys, beam, SEFD), and how bright must a source be? | [`hardware_model/`](hardware_model/) | `python3 hardware_model/compute_performance.py` | [hardware_model/README.md](hardware_model/README.md) |
+| **hydroline** | Where does the zenith beam point over time, what drifts through it, and what can we detect? | [`hydroline/`](hydroline/) (+ `run.py`, `webui.py`) | `python3 run.py` | this file, from the next heading |
+| **projections** | How does a set of sky coordinates look under a given map projection? | [`projections/`](projections/) | `python3 projections/example.py` | docstring of `projections/projections.py` |
+
+```
+ hardware_model/hardware_parameters.yaml        (you edit: the parts list)
+            │
+            ▼  hardware_model  (all equations in hardware_model/performance.py)
+ hardware_model/output/performance_parameters.yaml   ← the only link between the two programs
+            │
+            ▼  hydroline   python3 run.py --performance <that file> --snr-target 3
+ outputs/  (pointing track, transits, detectability, figures, report)
+```
+
+hydroline can also run without hardware_model: it then uses one of its preset
+antennas or the antenna in `config.example.yaml`.
+
+---
+
 # hydroline — zenith drift-scan planner for a 21 cm telescope
 
 Point an antenna straight up, bolt it down, and let the Earth do the scanning.
@@ -138,19 +165,21 @@ so the file holds what rarely changes (where the array is) and the flags carry
 what you sweep. Numeric strings are coerced, so YAML's `2.5e6` footgun — which
 YAML 1.1 reads as a *string* unless you write `2.5e+6` — will not bite you.
 
-### Antenna from real parts (hardware model)
+### Antenna from real parts (the separate hardware_model program)
 
-Instead of a preset, the antenna can be computed from a parts list (reflector,
-feed, cables, LNA, filter, SDR) with `compute_performance.py`. It writes a
-`performance_parameters.yaml` (gain, Friis T_rec, passband, T_sys, beam, SEFD),
-a frequency-response graph, and the flux needed for a target SNR. Then:
+Instead of a preset, hydroline can take its antenna from the
+`performance_parameters.yaml` that the **hardware_model** program computes
+from a parts list. hydroline only reads that file (`hydroline/performance_file.py`);
+it never runs or imports hardware_model.
 
 ```bash
-python3 compute_performance.py
-python3 run.py --performance hardware/output/performance_parameters.yaml --snr-target 3
+python3 hardware_model/compute_performance.py
+python3 run.py --performance hardware_model/output/performance_parameters.yaml --snr-target 3
 ```
 
-See **[HARDWARE_MODEL.md](HARDWARE_MODEL.md)** for how to use it and what to expect.
+`--snr-target 3` sets the detection threshold and queries the live catalogues
+only for sources bright enough to reach SNR 3 in one transit. See
+[hardware_model/README.md](hardware_model/README.md).
 
 ---
 
@@ -307,13 +336,18 @@ hydroline/
   theme.py                 plot palettes
   export.py                CSV / JSON / HTML output
   cli.py                   argument parsing
+  performance_file.py      reads hardware_model's performance_parameters.yaml
 tests/
   test_hydroline.py          35 tests, mostly on the physics
   test_live_catalog_mapping.py  catalogue-building tests, no network
   test_live_catalog_network.py  real NVSS/ALFALFA/SIMBAD queries, opt-in
+  test_performance_file.py   reading a performance_parameters.yaml
   conftest.py                 registers the network-test opt-in
 outputs/                   everything a run produces
 ```
+
+The two other programs live in `hardware_model/` and `projections/`, each with
+its own tests; `python3 -m pytest` from the repository root runs all of them.
 
 ---
 
