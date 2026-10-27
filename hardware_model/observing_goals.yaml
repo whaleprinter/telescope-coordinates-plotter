@@ -1,0 +1,20 @@
+# observing_goals.yaml -- what you want to detect, for detection_thresholds.yaml
+#
+# The hardware stops at SEFD.  Turning that into "how bright must a source be"
+# needs three things the hardware doesn't know: the SNR you insist on, how
+# long you integrate, and how much bandwidth the signal occupies.
+
+snr_target:    {value: 3, unit: ""}
+
+# Integrations to tabulate.  "transit" = one drift through the beam (computed
+# from the beam width and declination); "transit x 30" = 30 days stacked;
+# anything else is a time, e.g. {value: 1, unit: h}.
+# The FIRST entry is the one used for the database_index floors.
+integrations:
+  - transit
+  - transit x 30
+  - {value: 1, unit: h}
+  - {value: 24, unit: h}
+
+# Velocity width of a typical HI line you want to catch (matched filter).
+hi_line_width: {value: 200, unit: km/s}

@@ -71,6 +71,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--integration", type=float, help="integration time, s")
     g.add_argument("--npol", type=int, choices=[1, 2])
     g.add_argument("--snr", type=float, help="detection threshold in sigma")
+    g.add_argument("--performance", type=Path,
+                   help="performance_parameters.yaml written by the separate "
+                        "hardware_model program: "
+                        "take the beam, A_eff, T_sys and bandwidth from the "
+                        "hardware model (other antenna flags still override)")
+    g.add_argument("--snr-target", type=float,
+                   help="'I want SNR N': sets the detection threshold AND queries "
+                        "the catalogues only for sources bright enough to reach "
+                        "it in one transit (unless --flux-floor is given)")
     g.add_argument("--frequency", type=float, help="centre frequency, Hz")
     g.add_argument("--alt", type=float,
                    help="pointing altitude, deg (90 = straight up)")
@@ -139,6 +148,11 @@ def configuration_from_args(args: argparse.Namespace) -> Configuration:
 
     if args.antenna:
         cfg.antenna = PRESET_ANTENNAS[args.antenna]
+    if args.performance:
+        from .performance_file import antenna_from_performance
+        cfg.antenna = antenna_from_performance(args.performance, cfg.antenna)
+    if args.snr_target is not None and args.snr is None:
+        args.snr = args.snr_target
     ant_map = {
         "name": args.antenna_name, "kind": args.kind,
         "diameter_m": args.diameter, "aperture_e_m": args.aperture_e,
@@ -206,10 +220,18 @@ def _build_catalog(cfg: Configuration, args: argparse.Namespace,
         say(f"  Install with: {sys.executable} -m pip install astroquery")
         return load_catalog(DEFAULT_CATALOG), None
 
+    flux_floor = args.flux_floor
+    if flux_floor is None and args.snr_target is not None:
+        tau = model.transit_seconds(track.dec_deg)
+        flux_floor = args.snr_target * model.delta_s_rms_jy(integration_s=tau)
+        say(f"Catalogue: SNR target {args.snr_target:g} in one {tau/60:.0f}-min "
+            f"transit needs S ≥ {flux_floor:.3g} Jy "
+            f"(SEFD {model.sefd_jy:.3g} Jy, {cfg.antenna.rf_bandwidth_hz/1e6:.2f} MHz)"
+            f" -- querying above that")
     try:
         result = build_live_catalog(
             track.dec_deg, frac * model.hpbw_deg, model,
-            flux_floor_jy=args.flux_floor,
+            flux_floor_jy=flux_floor,
             flux_floor_multiplier=args.flux_floor_multiplier,
             include_simbad=not args.no_simbad,
             max_age_days=args.live_cache_max_age, refresh=args.refresh_catalog,

@@ -1,0 +1,160 @@
+# hardware_parameters.yaml -- the INPUT to the hardware_model program
+#
+#   python3 hardware_model/compute_performance.py
+#
+# Basic facts about the setup, written the way datasheets give them.
+# Parameter format:   name: {value, unit, status, notes}
+#
+#   value   a number (or text for descriptive entries)
+#   unit    any of Hz kHz MHz GHz | m cm mm ft in | K C | deg | dB dBm dBi |
+#           dB/m dB/100ft | s min h | W V | bit | "" (no unit)
+#   status  datasheet | measured | estimate | placeholder   (default datasheet)
+#           Anything marked estimate/placeholder is listed in the output, so
+#           you can always see which conclusions rest on guesses.
+#   notes   free text
+#
+# A value that changes with frequency can be given as a curve instead:
+#   gain: {unit: dB, freq_unit: GHz, curve: [[1.3, 20.6], [1.4, 19.81], [1.5, 19.1]]}
+# or read from a two-column CSV:   {unit: dB, freq_unit: MHz, file: lna_gain.csv}
+# An amplifier or filter can also take its gain from a manufacturer's
+# Touchstone file:   sparameters: ZX60-P162LN+.s2p   (next to this file)
+#
+# REARRANGING THE CHAIN: the RF components run in chain_position order.
+# Change the numbers (or run with --order a,b,c) and re-run.  "enabled: false"
+# takes a component out without deleting it.
+
+meta:
+  name: Duke 21 cm zenith telescope (Fitzpatrick roof)
+
+analysis:
+  center_freq:  {value: 1420.405751768, unit: MHz, notes: HI rest frequency}
+  # Range for the frequency-response plot and CSV.
+  sweep_min:    {value: 1380, unit: MHz}
+  sweep_max:    {value: 1460, unit: MHz}
+  sweep_points: {value: 1601, unit: ""}
+
+# Everything the antenna temperature T_A needs that is not hardware.
+environment:
+  site_latitude:          {value: 36.003147, unit: deg, notes: "36°00'11.33\" N, Fitzpatrick roof"}
+  ambient_temperature:    {value: 295, unit: K, status: estimate,
+                           notes: default physical temperature of every part}
+  ground_temperature:     {value: 290, unit: K, status: estimate}
+  cmb_temperature:        {value: 2.725, unit: K}
+  galactic_temperature_408: {value: 20, unit: K, status: estimate,
+                           notes: "Haslam 408 MHz map, off the plane; 50-200 K in it"}
+  galactic_spectral_index:  {value: -2.7, unit: ""}
+  atmosphere_temperature: {value: 2.0, unit: K, notes: "zenith, 1.4 GHz"}
+  horizon_elevation:      {value: 15, unit: deg, notes: roofline / trees}
+
+# What each stage of the analysis produces (documentation; the output file is
+# organised under the same headings).
+stages:
+  - id: collection
+    description: How much power the antenna collects from the sky
+    produces: [effective_area, aperture_efficiency, gain]
+  - id: beam_pattern
+    description: Viewable angular area, and its shape in 3-D
+    produces: [hpbw_e_plane, hpbw_h_plane, directivity, first_sidelobe]
+  - id: noise
+    description: Noise from each stage and from the sky/ground
+    produces: [t_receiver, t_antenna, t_system]
+  - id: gain
+    description: Total gain from antenna to the input of the SDR
+    produces: [total_gain, passband, noise_bandwidth, passband_ripple]
+  - id: position
+    description: Where the antenna points in the sky
+    produces: [beam_declination, declination_strip, transit_time]
+
+components:
+
+  # ---------------------------------------------------------- structure
+  - id: reflector
+    type: reflector
+    enabled: true            # false = the feed alone points at the sky
+    model:
+    parameters:
+      diameter:          {value: 1.5, unit: m, status: placeholder}
+      focal_ratio:       {value: 0.4, unit: "", status: placeholder}
+      surface_rms_error: {value: 3, unit: mm, status: estimate}
+      blockage_fraction: {value: 0.02, unit: "", status: estimate,
+                          notes: area shadowed by the feed and struts}
+
+  - id: feed
+    type: feed
+    model:
+    parameters:
+      type:              {value: cantenna (circular waveguide)}
+      # A circular-waveguide feed only propagates between the TE11 and TM01
+      # cut-offs; giving the diameter sets those band edges automatically.
+      diameter:          {value: 0.15, unit: m, status: placeholder}
+      # Feed pattern: give HPBW per plane, or edge_taper_e/_h (dB at the rim).
+      hpbw_e:            {value: 66, unit: deg, status: placeholder}
+      hpbw_h:            {value: 80, unit: deg, status: placeholder}
+      e_plane_azimuth:   {value: 0, unit: deg, notes: "0 = E-plane runs north-south"}
+      ohmic_loss:        {value: 0.1, unit: dB, status: estimate}
+      vswr:              {value: 1.5, unit: ":1", status: estimate}
+      back_radiation_fraction: {value: 0.02, unit: "", status: estimate}
+
+  - id: mount
+    type: mount
+    parameters:
+      type:              {value: fixed}
+      pointing_alt:      {value: 90, unit: deg, notes: straight up}
+      pointing_az:       {value: 0, unit: deg}
+
+  # ---------------------------------------------------------- RF chain
+  - id: feed_cable
+    type: cable
+    chain_position: 1
+    model: LMR-400 pigtail
+    parameters:
+      length:            {value: 0.3, unit: m, status: estimate}
+      loss_per_length:   {value: 4.4, unit: dB/100ft, notes: LMR-400 datasheet at 1500 MHz}
+      loss_ref_freq:     {value: 1500, unit: MHz}
+
+  - id: lna
+    type: amplifier
+    chain_position: 2
+    model: ZX60-P162LN+
+    parameters:
+      freq_min:          {value: 0.7, unit: GHz}
+      freq_max:          {value: 1.6, unit: GHz}
+      gain:              {value: 19.81, unit: dB, notes: at 1.4 GHz}
+      noise_figure:      {value: 0.7, unit: dB, notes: at 1.4 GHz}
+      output_vswr:       {value: 1.8, unit: ":1", notes: at 1.4 GHz}
+      p1db_output:       {value: 19.6, unit: dBm, notes: at 1.4 GHz}
+      oip3:              {value: 29.8, unit: dBm, notes: at 1.4 GHz}
+      supply_voltage:    {value: 5.5, unit: V}
+      supply_power:      {value: 0.55, unit: W}
+
+  - id: bandpass_filter
+    type: filter
+    chain_position: 3
+    model:
+    parameters:
+      center_freq:       {value: 1420, unit: MHz, status: placeholder}
+      bandwidth:         {value: 30, unit: MHz, status: placeholder}
+      insertion_loss:    {value: 1.0, unit: dB, status: placeholder}
+      out_of_band_rejection: {value: 60, unit: dB, status: placeholder}
+      response:          {value: butterworth}
+      order:             {value: 5, unit: ""}
+
+  - id: coax_run
+    type: cable
+    chain_position: 4
+    model: LMR-400, roof to SDR
+    parameters:
+      length:            {value: 10, unit: m, status: estimate}
+      loss_per_length:   {value: 4.4, unit: dB/100ft, notes: LMR-400 datasheet at 1500 MHz}
+      loss_ref_freq:     {value: 1500, unit: MHz}
+
+  - id: sdr
+    type: sdr
+    chain_position: 5
+    model: RSPduo
+    parameters:
+      sample_rate:       {value: 6.048, unit: MHz, notes: at 14 bits}
+      adc_bits:          {value: 14, unit: bit, notes: "selectable 12, 10 or 8"}
+      noise_figure:      {value: 4.3, unit: dB, notes: at 1500 MHz}
+      fft_size:          {value: 1024, unit: "", notes: spectrometer channels}
+      n_pol:             {value: 1, unit: "", notes: 2 if both tuners record a polarisation each}
