@@ -279,3 +279,100 @@ def test_does_not_import_hydroline():
     import re
     src = "".join(p.read_text() for p in (ROOT / "hardware_model").glob("*.py"))
     assert not re.search(r"^\s*(from|import)\s+hydroline", src, re.M)
+
+
+# ------------------------------------------------ Section 11: bench tests
+BENCH = ROOT / "hardware_model" / "bench_parameters.yaml"
+
+
+def test_eq39_return_loss():
+    assert float(pm.return_loss_db(1.29)) == pytest.approx(
+        -20 * math.log10(0.29 / 2.29))                     # 17.9 dB
+    assert float(pm.return_loss_db(2.0)) == pytest.approx(9.542, abs=1e-3)
+
+
+def test_eq40_drive_levels_and_compression():
+    outs = pm.stage_output_powers_dbm(-12.0, [19.81, -3.0, -20.0])
+    assert [float(x) for x in outs] == pytest.approx([7.81, 4.81, -15.19])
+    assert float(pm.input_compression_dbm(19.6, 19.81)) == pytest.approx(0.79)
+
+
+def test_eq41_vna_floor():
+    assert float(pm.vna_displayed_s21_db(-100.0, 70.0)) == pytest.approx(-70.0, abs=0.01)
+    assert float(pm.vna_displayed_s21_db(-3.0, 70.0)) == pytest.approx(-3.0, abs=1e-3)
+
+
+def test_eq42_eq43_round_trip():
+    """A rise computed from a known SDR temperature gives that temperature back."""
+    ts, ta, g, t_sdr = 295.0, 52.0, 16.7, 4306.0
+    r = pm.noise_power_ratio(ts, ta + t_sdr / pm.db_to_lin(g), g, t_sdr, 0.0)
+    assert float(r) == pytest.approx(((ts + ta) * pm.db_to_lin(g) + t_sdr) / (ts + t_sdr))
+    assert float(pm.sdr_temperature_from_ratio(r, ts, ta, g)) == pytest.approx(t_sdr)
+
+
+def test_bench_file_has_no_antenna_and_runs_every_test():
+    hw = load_hardware(BENCH)
+    assert not hw.has_antenna and hw.chain == []
+    ids = [t.id for t in hw.bench_tests]
+    assert ids == ["lna", "filter", "lna_then_filter", "filter_then_lna",
+                   "sdr_noise_v3", "sdr_noise_v4"]
+    for t in hw.bench_tests:
+        res = pm.evaluate_bench(hw, t)
+        assert np.all(np.isfinite(res.s21_db))
+
+
+def test_calibrated_out_pad_is_in_the_power_path_only():
+    hw = load_hardware(BENCH)
+    lna = pm.evaluate_bench(hw, next(t for t in hw.bench_tests if t.id == "lna"))
+    i = lna.index
+    assert lna.s21_db[i] == pytest.approx(lna.stages[0].gain_db[i])     # pad not shown
+    assert lna.nf_db[i] < 1.0                                           # pad not in NF
+    port2 = lna.power_rows[-1]["input_dbm"]
+    assert port2 == pytest.approx(-12.0 + lna.stages[0].gain_db[i] - 20.0)
+
+
+def test_bench_filter_order_costs_noise_figure():
+    hw = load_hardware(BENCH)
+    a = pm.evaluate_bench(hw, next(t for t in hw.bench_tests if t.id == "lna_then_filter"))
+    b = pm.evaluate_bench(hw, next(t for t in hw.bench_tests if t.id == "filter_then_lna"))
+    i = a.index
+    assert a.s21_db[i] == pytest.approx(b.s21_db[i])        # same gain either way
+    assert b.nf_db[i] - a.nf_db[i] > 2.5                    # filter-first adds ~3 dB NF
+
+
+def test_measured_file_is_compared_with_limits(tmp_path):
+    """A synthetic 'measurement' 0.5 dB below the model reads as -0.5 dB deviation."""
+    import yaml
+    data = yaml.safe_load(BENCH.read_text())
+    hw = load_hardware(BENCH)
+    t = next(x for x in hw.bench_tests if x.id == "filter")
+    res = pm.evaluate_bench(hw, t)
+    lines = ["! synthetic", "# Hz S DB R 50"]
+    for f, s in zip(res.freq_hz, res.s21_db - 0.5):
+        lines.append(f"{f:.0f} -20 0 {s:.4f} 0 0 0 0 0")
+    (tmp_path / "filter.s2p").write_text("\n".join(lines) + "\n")
+    for bt in data["bench_tests"]:
+        if bt["id"] == "filter":
+            bt["measured"] = str(tmp_path / "filter.s2p")
+    hw2 = load_hardware(data=data)
+    res2 = pm.evaluate_bench(hw2, next(x for x in hw2.bench_tests if x.id == "filter"))
+    from hardware_model.report import bench_dict
+    rows = bench_dict(res2, hw2)["at_check_frequencies"]
+    assert all(r["s21_deviation_db"] == pytest.approx(-0.5, abs=1e-3) for r in rows)
+    assert all(c.measured_pass is not None for c in res2.limits)
+
+
+def test_bench_errors_are_specific():
+    with pytest.raises(HardwareConfigError, match="feed component is required"):
+        load_hardware(data={"components": []})
+    import yaml
+    data = yaml.safe_load(BENCH.read_text())
+    data["bench_tests"][0]["chain"] = ["lna", "nope"]
+    with pytest.raises(HardwareConfigError, match="nope"):
+        load_hardware(data=data)
+
+
+def test_bench_cli_end_to_end(tmp_path):
+    from hardware_model.compute_performance import main
+    assert main([str(BENCH), "-o", str(tmp_path), "--no-plots"]) == 0
+    assert (tmp_path / "bench" / "sdr_noise_v3" / "expected.yaml").exists()

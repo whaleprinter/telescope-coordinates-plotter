@@ -1172,3 +1172,282 @@ def evaluate(hw: Hardware, *, reuse: Performance | None = None) -> Performance:
                        transit_s=transit_time_s(ew, dec),                          # Eq. 37
                        noise_power_sdr_dbm=p_sdr, lna_output_noise_dbm=p_lna,
                        lna_headroom_db=headroom)
+
+
+# =============================================================================
+# 11. Bench tests: components on a VNA, or into an SDR -- no antenna
+# =============================================================================
+# A bench test drives a chain of components from a 50-ohm source (the VNA's
+# port 1, or a 50-ohm terminator) instead of an antenna.  Steps B1-B6 in
+# evaluate_bench() reuse the component models of Section 2 (Eqs. 2-9) and the
+# cascade of Section 1 (Eqs. 4, 5), and add the equations below.
+
+def return_loss_db(vswr):
+    """[Eq. 39]  RL = -20 log10 |Gamma|,  |Gamma| = (VSWR - 1)/(VSWR + 1);  S11_dB = -RL.
+
+    What a VNA shows on its S11 (log-mag) trace for a port with this VSWR.
+    VSWR 1.29 -> |S11| = -17.9 dB.  [Pozar 2.3]"""
+    v = np.asarray(vswr, float)
+    return -20.0 * np.log10(np.maximum((v - 1.0) / (v + 1.0), 1e-12))
+
+
+def stage_output_powers_dbm(p_in_dbm, gains_db: Sequence[np.ndarray]):
+    """[Eq. 40a]  P_out,i = P_in + G_1 + ... + G_i   (dBm, linear operation).
+
+    Power at the output of each stage for a drive level P_in, valid while
+    every stage stays well below compression.  (Eq. 5 applied stage by stage.)"""
+    out, p = [], np.asarray(p_in_dbm, float)
+    for g in gains_db:
+        p = p + g
+        out.append(p)
+    return out
+
+
+def input_compression_dbm(p1db_out_dbm, gain_db):
+    """[Eq. 40b]  P_in,1dB = P_out,1dB - (G - 1)  (dBm).
+
+    The input level at which an amplifier's output is 1 dB below linear.
+    Back-off = P_in,1dB - P_in; keep it above ~10 dB for a clean gain
+    measurement.  [Pozar 10.3, "gain compression"]"""
+    return np.asarray(p1db_out_dbm, float) - (np.asarray(gain_db, float) - 1.0)
+
+
+def vna_displayed_s21_db(s21_db, dynamic_range_db):
+    """[Eq. 41]  S21_shown = 10 log10( 10^(S21/10) + 10^(-DR/10) ).
+
+    MODEL ASSUMPTION, NOT FROM A REFERENCE.  A VNA cannot show transmission
+    below its noise floor (dynamic range DR below a calibrated thru); this adds
+    that floor to the true |S21|^2 as an incoherent power, so deep stopbands
+    flatten out at about -DR dB.  It tells you which parts of a trace are the
+    filter and which are the instrument."""
+    return 10.0 * np.log10(db_to_lin(s21_db) + db_to_lin(-np.asarray(dynamic_range_db, float)))
+
+
+def noise_power_ratio(t_source_k, t_e_test_k, g_test_db, t_e_ref_k, g_ref_db):
+    """[Eq. 42]  R = (T_s + T_e,test) G_test / ((T_s + T_e,ref) G_ref).
+
+    Ratio of the noise power an SDR reports for two chains fed from the same
+    50-ohm terminator at temperature T_s: a "test" chain (e.g. LNA -> filter
+    -> SDR) and a "reference" chain (e.g. the SDR alone).  T_e = Friis
+    temperature of each whole chain (Eq. 4, SDR included); G = analog gain up
+    to the SDR input (Eq. 5).  Each noise power is k T B G (Eq. 33) with the
+    same k, B and SDR gain setting, which cancel -- so this ratio needs no
+    absolute power calibration, only fixed SDR gain (AGC off).
+    For reference = SDR alone:  R = ((T_s + T_a) G_a + T_sdr) / (T_s + T_sdr).
+    [Friis; Nyquist; the Y-factor idea of Pozar 10.2]"""
+    return ((t_source_k + np.asarray(t_e_test_k, float)) * db_to_lin(g_test_db)
+            / ((t_source_k + np.asarray(t_e_ref_k, float)) * db_to_lin(g_ref_db)))
+
+
+def sdr_temperature_from_ratio(ratio, t_source_k, t_analog_k, g_analog_db):
+    """[Eq. 43]  T_sdr = ((T_s + T_a) G_a - R T_s) / (R - 1).
+
+    Eq. 42 (reference = SDR alone) solved for the SDR's noise temperature: a
+    measured noise-floor rise R, with the LNA's T_a and G_a from its datasheet
+    and the VNA-verified gain, gives the SDR's noise figure via Eq. 2.
+    (Algebra on Eq. 42.)"""
+    r = np.asarray(ratio, float)
+    return ((t_source_k + t_analog_k) * db_to_lin(g_analog_db) - r * t_source_k) / (r - 1.0)
+
+
+@dataclass
+class LimitCheck:
+    quantity: str
+    lo_hz: float
+    hi_hz: float
+    min_db: float | None
+    max_db: float | None
+    notes: str
+    expected_worst_db: float | None     # the worst model value over the band
+    expected_pass: bool | None
+    measured_worst_db: float | None = None
+    measured_pass: bool | None = None
+
+
+@dataclass
+class BenchResult:
+    test: object                        # inputs.BenchTest
+    freq_hz: np.ndarray
+    stages: list[StageResult]
+    s21_db: np.ndarray                  # expected transmission of the whole chain
+    s21_shown_db: np.ndarray | None     # what the VNA can display (Eq. 41)
+    s11_db: np.ndarray | None           # expected input reflection (Eq. 39)
+    s22_db: np.ndarray | None           # expected output reflection (reverse the DUT to see it)
+    t_e_k: np.ndarray                   # chain noise temperature (Eq. 4)
+    nf_db: np.ndarray                   # chain noise figure (Eq. 2 inverted)
+    power_rows: list[dict]              # drive levels through the chain (Eq. 40)
+    limits: list[LimitCheck]
+    warnings: list[str]
+    measured_freq_hz: np.ndarray | None = None
+    measured_s21_db: np.ndarray | None = None
+    measured_s11_db: np.ndarray | None = None
+    noise: dict | None = None           # sdr_noise tests (Eqs. 42, 43)
+    index: int = 0                      # centre frequency in freq_hz
+
+
+def _chain_noise(chain, f):
+    gains = [component_gain_db(c, f) for c in chain]
+    temps = [component_noise_temp_k(c, f, g) for c, g in zip(chain, gains)]
+    contrib, before = friis_cascade(temps, gains)                                 # Eq. 4
+    analog = []
+    for c, g in zip(chain, gains):
+        if c.type == "sdr":
+            break
+        analog.append(g)
+    g_analog = cascade_gain_db(analog) if analog else np.zeros_like(f)           # Eq. 5
+    return gains, temps, contrib, before, sum(contrib), g_analog
+
+
+def _vswr_db(comp, name, f):
+    p = comp.params.get(name)
+    if p is not None and p.unit == "":
+        return -return_loss_db(p.at(f))                                          # Eq. 39
+    p = comp.params.get(name.replace("vswr", "return_loss"))
+    if p is not None and p.unit == "dB":
+        return -np.abs(p.at(f))
+    return None
+
+
+def _worst(f, y, lo, hi, mn, mx):
+    m = (f >= lo) & (f <= hi)
+    if not m.any():
+        i = int(np.argmin(np.abs(f - lo)))
+        m = np.zeros_like(f, bool)
+        m[i] = True
+    seg = y[m]
+    worst = float(seg.min()) if mn is not None else float(seg.max())
+    if mn is not None and mx is not None:
+        worst = float(seg.min()) if seg.min() - mn < mx - seg.max() else float(seg.max())
+    ok = (mn is None or seg.min() >= mn) and (mx is None or seg.max() <= mx)
+    return worst, bool(ok)
+
+
+def evaluate_bench(hw: Hardware, test) -> BenchResult:
+    """One bench test, Steps B1-B6."""
+    f0, f1, n = hw.sweep_hz
+    f = np.unique(np.concatenate([np.linspace(f0, f1, n), [hw.center_hz]]))
+    i0 = int(np.argmin(np.abs(f - hw.center_hz)))
+    chain, warn = test.chain, []
+    inst = hw.instrument
+
+    # Step B1 -- each component's gain and noise, and the Friis cascade. Eqs. 2-9, 4, 5
+    gains, temps, contrib, before, t_e, g_analog = _chain_noise(chain, f)
+    stages, cum = [], np.zeros_like(f)
+    for c, g, t, gb, ct in zip(chain, gains, temps, before, contrib):
+        cum = cum + g
+        stages.append(StageResult(c, g, t, gb, ct, cum.copy()))
+    # What the VNA displays excludes parts calibrated out by its thru
+    # calibration (they are still in the power path of Step B4).
+    s21 = cascade_gain_db([g for c, g in zip(chain, gains)                        # Eq. 5
+                           if c.id not in test.calibrated_out])
+    # The DUT's own noise figure excludes the calibrated-out parts too.     Eqs. 4, 2
+    if test.calibrated_out:
+        t_dut = _chain_noise([c for c in chain if c.id not in test.calibrated_out], f)[4]
+    else:
+        t_dut = t_e
+    nf = temp_to_nf_db(t_dut)
+
+    # Step B2 -- reflections: the first part's input, the last part's output.  Eq. 39
+    # (The chain's input match is the first part's when it isolates what follows
+    # -- true for an LNA (reverse isolation = gain + directivity, ~37 dB); for a
+    # passive first part the next part's match shows through, attenuated.)
+    shown_chain = [c for c in chain if c.id not in test.calibrated_out]
+    s11 = _vswr_db(shown_chain[0], "input_vswr", f)
+    s22 = _vswr_db(shown_chain[-1], "output_vswr", f)
+
+    # Step B3 -- what the VNA can display: its dynamic-range floor.         Eq. 41
+    shown = None
+    if test.type == "vna" and inst is not None:
+        dr = inst.get("s21_dynamic_range")
+        if dr is not None:
+            shown = vna_displayed_s21_db(s21, dr.at(f))
+        lo_i, hi_i = inst.number("freq_min", "Hz"), inst.number("freq_max", "Hz")
+        if (lo_i and f0 < lo_i) or (hi_i and f1 > hi_i):
+            warn.append("the sweep goes outside the instrument's frequency range")
+    if test.type == "vna" and any(c.type == "sdr" for c in chain):
+        warn.append("an SDR is a receiver: a VNA can measure its S11 but not an S21 through it")
+
+    # Step B4 -- drive levels through the chain at the centre frequency.  Eq. 40
+    rows = []
+    if test.type == "vna" and inst is not None and inst.get("output_power") is not None:
+        p_in = float(inst.require("output_power", "dBm").at(hw.center_hz))
+        outs = stage_output_powers_dbm(p_in, [g[i0] for g in gains])
+        p_prev = p_in
+        for c, g, p_out in zip(chain, gains, outs):
+            row = {"component": c.id, "input_dbm": p_prev, "output_dbm": float(p_out)}
+            p1 = c.params.get("p1db_output")
+            if p1 is not None:
+                p_in1 = float(input_compression_dbm(p1.at(hw.center_hz), g[i0]))  # Eq. 40b
+                row["input_p1db_dbm"] = p_in1
+                row["backoff_db"] = p_in1 - p_prev
+                if p_in1 - p_prev < 10:
+                    warn.append(f"{c.id}: only {p_in1 - p_prev:.1f} dB below input "
+                                f"compression -- lower the VNA power or pad the input")
+            pmax = c.params.number("max_input_power", "dBm")
+            if pmax is not None:
+                row["max_input_dbm"] = pmax
+                if p_prev > pmax:
+                    warn.append(f"{c.id}: drive {p_prev:+.1f} dBm exceeds its "
+                                f"{pmax:+.1f} dBm maximum input")
+            rows.append(row)
+            p_prev = float(p_out)
+        p_max_vna = inst.number("max_input_power", "dBm")
+        rows.append({"component": "VNA port 2", "input_dbm": p_prev,
+                     **({"max_input_dbm": p_max_vna} if p_max_vna is not None else {})})
+        if p_max_vna is not None and p_prev > p_max_vna:
+            warn.append(f"VNA port 2 would receive {p_prev:+.1f} dBm, above the "
+                        f"{p_max_vna:+.1f} dBm entered as its safe input: add an "
+                        f"attenuator after the DUT and include it in the thru calibration")
+
+    # Step B5 -- a measured trace, if you have exported one.                  Eq. 9
+    m_f = m_s21 = m_s11 = None
+    if test.measured is not None:
+        if test.measured.exists():
+            from .inputs import read_touchstone_s21
+            ts = read_touchstone_s21(test.measured)
+            m_f = ts.freq_hz
+            m_s21 = s21_db(ts.fmt, ts.a, ts.b) if not np.all(np.isnan(ts.a)) else None
+            m_s11 = s21_db(ts.fmt, ts.s11_a, ts.s11_b) if ts.s11_a is not None else None
+        else:
+            warn.append(f"no measurement yet at {test.measured}")
+
+    checks = []
+    for lim in test.limits:
+        y = s21 if lim.quantity == "s21" else s11
+        if y is None:
+            continue
+        w, ok = _worst(f, y, lim.lo_hz, lim.hi_hz, lim.min_db, lim.max_db)
+        ch = LimitCheck(lim.quantity, lim.lo_hz, lim.hi_hz, lim.min_db, lim.max_db,
+                        lim.notes, w, ok)
+        my = m_s21 if lim.quantity == "s21" else m_s11
+        if my is not None:
+            ch.measured_worst_db, ch.measured_pass = _worst(m_f, my, lim.lo_hz, lim.hi_hz,
+                                                            lim.min_db, lim.max_db)
+        checks.append(ch)
+
+    # Step B6 -- noise-floor ratio for sdr_noise tests.                  Eqs. 42, 43
+    noise = None
+    if test.type == "sdr_noise":
+        ts_k = hw.environment.source_k
+        _, _, _, _, t_ref, g_ref = _chain_noise(test.reference, f)
+        r = noise_power_ratio(ts_k, t_e[i0], g_analog[i0], t_ref[i0], g_ref[i0])
+        noise = {"source_k": ts_k, "ratio_db": float(lin_to_db(r)),
+                 "ratio_db_vs_f": lin_to_db(noise_power_ratio(ts_k, t_e, g_analog,
+                                                              t_ref, g_ref)),
+                 "reference": [c.id for c in test.reference]}
+        if [c.type for c in test.reference] == ["sdr"]:
+            sdr = test.reference[0]
+            t_a = float(sum(contrib[:-1])[i0]) if len(contrib) > 1 else 0.0
+            table = []
+            for nf_sdr in (4, 6, 8, 10, 12, 15):
+                t_sdr = float(nf_to_temp_k(nf_sdr))
+                rr = noise_power_ratio(ts_k, t_a + t_sdr / db_to_lin(g_analog[i0]),
+                                       g_analog[i0], t_sdr, 0.0)
+                table.append({"sdr_noise_figure_db": nf_sdr,
+                              "expected_ratio_db": float(lin_to_db(rr))})
+            noise.update(analog_t_k=t_a, analog_gain_db=float(g_analog[i0]),
+                         sdr_nf_assumed_db=float(sdr.params.require("noise_figure", "dB")
+                                                 .at(hw.center_hz)),
+                         ratio_vs_sdr_nf=table)
+    return BenchResult(test, f, stages, s21, shown, s11, s22, t_dut, nf, rows, checks, warn,
+                       m_f, m_s21, m_s11, noise, i0)

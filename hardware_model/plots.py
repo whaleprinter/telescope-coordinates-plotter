@@ -275,3 +275,75 @@ def plot_order_comparison(results: Sequence[tuple[str, Performance]], path: Path
         fig.savefig(path)
         plt.close(fig)
     return path
+
+
+def plot_bench(res, path: Path, s: Style = STYLES["light"]) -> Path:
+    """Expected (and measured) VNA traces for one bench test, with limit lines."""
+    t, f = res.test, res.freq_hz / 1e6
+    with styled(s):
+        fig, axes = plt.subplots(2, 1, figsize=(11, 8.5), sharex=True)
+        legend = dict(loc="upper left", bbox_to_anchor=(1.01, 1.0))
+
+        ax = axes[0]
+        ax.axvline(HI_REST_HZ / 1e6, color=s.ink_muted, lw=0.9, label="HI 1420.406 MHz")
+        if t.type == "vna":
+            ax.plot(f, res.s21_db, color=s.ink, lw=2.0, label="S21 expected (datasheet model)")
+            if res.s21_shown_db is not None:
+                ax.plot(f, res.s21_shown_db, color=s.ink_muted, lw=1.2,
+                        label="what the VNA can show (Eq. 41 floor)")
+            if res.measured_s21_db is not None:
+                ax.plot(res.measured_freq_hz / 1e6, res.measured_s21_db, color=s.series[1],
+                        lw=1.6, label="S21 measured")
+            ax.set_title(f"{t.id}: S21   ({' > '.join(c.id for c in t.chain)})")
+        else:
+            gain = res.stages[-2].cumulative_gain_db if len(res.stages) > 1 else res.s21_db
+            ax.plot(f, gain, color=s.ink, lw=2.0, label="gain up to the SDR input")
+            ax.set_title(f"{t.id}: analog gain ahead of the SDR")
+        for c in (x for x in res.limits if x.quantity == "s21"):
+            for v, lab in ((c.min_db, "min"), (c.max_db, "max")):
+                if v is None:
+                    continue
+                lo, hi = c.lo_hz / 1e6, c.hi_hz / 1e6
+                if hi - lo < 1:
+                    ax.plot([lo], [v], marker="v" if lab == "max" else "^", ms=9,
+                            color=s.series[2], ls="none")
+                else:
+                    ax.plot([lo, hi], [v, v], color=s.series[2], lw=2.5)
+        ax.plot([], [], color=s.series[2], lw=2.5, marker="^", label="limit lines (see expected.yaml)")
+        ax.set_ylabel("dB")
+        ax.legend(**legend)
+
+        ax = axes[1]
+        if t.type == "vna":
+            if res.s11_db is not None:
+                ax.plot(f, res.s11_db, color=s.series[0], lw=1.8, label="S11 expected (input)")
+            if res.s22_db is not None:
+                ax.plot(f, res.s22_db, color=s.series[0], lw=1.0, alpha=0.6,
+                        label="S22 expected (output; reverse the DUT)")
+            if res.measured_s11_db is not None:
+                ax.plot(res.measured_freq_hz / 1e6, res.measured_s11_db, color=s.series[1],
+                        lw=1.6, label="S11 measured")
+            for c in (x for x in res.limits if x.quantity == "s11"):
+                if c.max_db is not None:
+                    ax.plot([c.lo_hz / 1e6, c.hi_hz / 1e6], [c.max_db] * 2, color=s.series[2], lw=2.5,
+                            label="S11 limit")
+            ax.set_ylabel("reflection (dB)")
+            ax.set_title("Return loss  (Eq. 39, from datasheet VSWR)")
+            ax.set_ylim(-40, 0)
+        else:
+            ax.plot(f, res.noise["ratio_db_vs_f"], color=s.series[1], lw=1.8,
+                    label=f"expected noise-floor rise: {res.noise['ratio_db']:.1f} dB at HI")
+            ax.set_ylabel("rise (dB)")
+            ax.set_title("Noise floor with the chain vs the SDR alone (Eq. 42)")
+        ax.set_xlabel("frequency (MHz)")
+        ax.set_xlim(f[0], f[-1])
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(**legend)
+        else:
+            ax.text(0.5, 0.5, "no published input/output match for this part:\n"
+                    "the VNA's S11 trace is the first measurement of it",
+                    transform=ax.transAxes, ha="center", va="center", color=s.ink_muted)
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+    return path

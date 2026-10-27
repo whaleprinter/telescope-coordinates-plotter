@@ -28,9 +28,10 @@ if __package__ in (None, ""):                 # run as a script: make the packag
     sys.path.insert(0, str(HERE.parent))
 
 from hardware_model.inputs import HardwareConfigError, Goals, load_goals, load_hardware  # noqa: E402
-from hardware_model.performance import evaluate  # noqa: E402
-from hardware_model.report import (describe, thresholds_dict, write_performance_yaml,  # noqa: E402
-                                   write_response_csv, write_thresholds_yaml)
+from hardware_model.performance import evaluate, evaluate_bench  # noqa: E402
+from hardware_model.report import (describe, describe_bench, thresholds_dict,  # noqa: E402
+                                   write_bench, write_performance_yaml, write_response_csv,
+                                   write_thresholds_yaml)
 
 DEFAULT_HARDWARE = HERE / "hardware_parameters.yaml"
 
@@ -57,7 +58,46 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--snr-target", type=float, help="override the goals file's snr_target")
     p.add_argument("--theme", choices=["light", "dark"], default="light")
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument("--test", nargs="+", metavar="ID",
+                   help="bench files: run only these bench_tests ids")
     return p
+
+
+def run_bench(hw, args, outdir: Path) -> int:
+    """Bench tests: expected VNA/SDR readings for components with no antenna."""
+    tests = hw.bench_tests
+    if args.test:
+        unknown = [t for t in args.test if t not in {x.id for x in tests}]
+        if unknown:
+            print(f"error: no bench test {', '.join(unknown)} (have: "
+                  f"{', '.join(x.id for x in tests)})", file=sys.stderr)
+            return 2
+        tests = [x for x in tests if x.id in args.test]
+    print(f"{hw.name}\n  bench tests -- "
+          f"{hw.instrument_model or 'no instrument block'}, "
+          f"{hw.sweep_hz[0]/1e6:g}-{hw.sweep_hz[1]/1e6:g} MHz, {hw.sweep_hz[2]} points")
+    for w in hw.warnings:
+        print(f"  ! {w}")
+    if hw.placeholders:
+        print(f"  ~ {len(hw.placeholders)} inputs are placeholders/estimates "
+              f"(listed in each expected.yaml)")
+    written = []
+    for t in tests:
+        try:
+            res = evaluate_bench(hw, t)
+        except HardwareConfigError as exc:
+            print(f"error in bench test {t.id!r}: {exc}", file=sys.stderr)
+            return 2
+        print(describe_bench(res))
+        d = outdir / "bench" / t.id
+        written += write_bench(res, hw, d)
+        if not args.no_plots:
+            from hardware_model.plots import STYLES, plot_bench
+            written.append(plot_bench(res, d / "expected.png", STYLES[args.theme]))
+    print("\n  wrote:")
+    for w in written:
+        print(f"    {w}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,6 +108,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         hw = load_hardware(hw_path, order=args.order)
+    except HardwareConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not hw.has_antenna:
+        return run_bench(hw, args, outdir)
+    if args.test:
+        return run_bench(hw, args, outdir)
+    try:
         perf = evaluate(hw)
         goals = load_goals(goals_path) if goals_path.exists() else None
         if args.snr_target is not None:

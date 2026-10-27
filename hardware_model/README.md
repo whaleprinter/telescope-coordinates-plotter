@@ -80,7 +80,8 @@ either read inputs or present results, and contain no physics.
 | `report.py` | Round each computed number, attach its unit and its `eq` number, and write the YAML and CSV outputs. | none |
 | `plots.py` | Draw the four figures from computed arrays. Colours are defined here, so it doesn't depend on hydroline's theme. | none |
 | `compute_performance.py` | Command line: parse arguments, call `evaluate()`, write files, run order comparisons. | none |
-| `hardware_parameters.yaml`, `observing_goals.yaml` | The inputs you edit. | — |
+| `hardware_parameters.yaml`, `observing_goals.yaml` | The inputs you edit (telescope). | — |
+| `bench_parameters.yaml` | Bench validation of the parts on a VNA (no antenna). | — |
 | `tests/test_hardware_model.py` | 28 checks against hand-computed textbook values. | — |
 
 Each entry in `performance_parameters.yaml` has an `eq:` field, for example
@@ -124,6 +125,7 @@ derivation and the meaning and unit of every symbol.
 | — | Dynamic range | 33 | P = kTBG | [Nyquist 1928] |
 | — | **SNR, and "I want SNR 3"** | 34 | SNR = (S/SEFD)√(n_pol B τ)/K_s; inverted for S or τ | [Dicke 1946], [ERA ch. 3], [Kraus ch. 7] |
 | — | Line width → bandwidth | 35 | Δf = (Δv/c) f₀ | first-order Doppler [ERA ch. 7] |
+| B1–B6 | **Bench tests** (no antenna): return loss, drive levels and compression, VNA noise floor, SDR noise-floor ratio and its inverse | 39–43 | RL = −20 log\|Γ\|; P_in,1dB = P1dB,out − (G − 1); R = (T_s+T_e,t)G_t / ((T_s+T_e,r)G_r) | [Pozar 2.3, 10.2, 10.3]; Eq. 41 is a labelled model assumption |
 | — | Rules of thumb (for comparison only) | 38a, 38b | HPBW ≈ 70λ/D; G ≈ 6(D/λ)² | [Kraus ch. 6], [ERA ch. 3] |
 
 The **reference plane** is the feed output terminals. Feed ohmic loss and
@@ -326,6 +328,112 @@ Four panels over 1380–1460 MHz:
 The analog chain is shown across the whole sweep because the SDR can be
 retuned. `frequency_response.csv` has every curve, plus each stage's gain and
 noise contribution, at each frequency.
+
+---
+
+## Bench validation: parts on a VNA, no antenna (`bench_parameters.yaml`)
+
+Before anything goes on the roof, check each part against its datasheet.
+`bench_parameters.yaml` describes the parts you're buying and six tests. It
+has no antenna, so the program runs in **bench mode**: each test drives a
+chain of parts from a 50 Ω source (the VNA's port 1, or a 50 Ω terminator)
+and predicts what you should see.
+
+```bash
+python3 hardware_model/compute_performance.py hardware_model/bench_parameters.yaml
+python3 hardware_model/compute_performance.py hardware_model/bench_parameters.yaml --test lna filter
+```
+
+Each test writes `output/bench/<test>/`:
+- `expected.yaml`: S21, S11, S22 and noise figure at the check frequencies;
+  the drive level at each stage; the limit lines with model pass/fail; and,
+  once you have a measurement, the measured values and their deviation.
+- `expected_s21.csv`: the same on the full sweep (201 points, the VNA's own grid).
+- `expected.png`: the expected trace, the VNA's noise floor, limit lines, and
+  your measurement overlaid.
+
+### The parts and where their numbers come from
+
+| part | source | what's solid | what's a guess |
+|---|---|---|---|
+| **Mini-Circuits ZX60-P162LN+** LNA | datasheet Rev. E, typical-performance table 700–1600 MHz | gain, NF, input/output VSWR, P1dB vs frequency; gain 20.9–24.5 dB guaranteed at 1.0 GHz; +25 dBm no-damage input | behaviour outside 0.7–1.6 GHz (Eq. 8) |
+| **GPIO Labs 1420 MHz** filter | Tindie listing (no datasheet) | passband 1420 ± 25 MHz, typ. 3 dB loss, ≥ 24 dB attenuation at 1300 and 1600 MHz, +10 dBm max | response shape, order, return loss, stopband floor: **the VNA is the first real data** |
+| **RTL-SDR Blog V3 / V4** | RTL-SDR Blog datasheets | range 0.5–1766 MHz, 2.4 / 2.56 MHz stable bandwidth, 8-bit ADC, 50 Ω, 4.5 V bias tee | **noise figure: not published**. 12 dB (V3) and 15 dB (V4) are estimates; the `sdr_noise` tests measure it |
+| **NanoVNA-F V2** | Radioddity spec table | 50 kHz–3 GHz; port-1 power −12 dBm at 1–2 GHz; S21 dynamic range 70 dB (60 dB above 1.5 GHz); measures S11 and S21 only | **maximum safe input power: not published** (0 dBm entered as a placeholder) |
+
+### Safety: read before powering anything
+
+1. **Power the LNA at +4.0 V (3.8–4.2 V), ~52 mA, on its V+ pin.** +5.5 V is
+   the datasheet's absolute maximum (damage) rating, not the operating
+   voltage. `hardware_parameters.yaml` (the telescope file) still lists
+   `supply_voltage: 5.5 V` for the LNA; change it to 4.0 V.
+2. **Keep the RTL-SDR bias tee OFF.** It puts 4.5 V DC on the SMA centre pin,
+   and the GPIO Labs filter is destroyed by DC on either port. The ZX60 doesn't
+   take power over its SMA, so the bias tee has nothing to power here.
+3. **Pad the LNA's output into the VNA.** The NanoVNA's −12 dBm plus ~20 dB
+   of gain puts about +8 dBm into port 2, and the VNA's safe input level isn't
+   published. Use a 20 dB SMA attenuator after the DUT and **include it in the
+   THRU calibration**: calibrate with cable–pad–cable, then insert the DUT. The
+   trace then shows the DUT alone. The tests list the pad under
+   `calibrated_out`, which keeps it in the power path but not in the trace.
+4. In `lna_then_filter`, the filter receives about +7.7 dBm, below its +10 dBm
+   rating. `drive_levels_at_center` shows the margin at each stage.
+
+### Measuring
+
+1. Set the VNA to **start 1000 MHz, stop 1800 MHz, 201 points**, the sweep in
+   the file, so the export lines up point for point. Do an SOLT calibration at
+   the cable ends, with the 20 dB pad in the thru path for the LNA tests.
+2. Measure, then export a 2-port Touchstone file (`.s2p`). Save it from the VNA,
+   or use a PC program such as NanoVNA-Saver if it supports your unit (check
+   before relying on it). Put it at the path in the test's `measured:` field, e.g.
+   `hardware_model/measured/lna.s2p`.
+3. Re-run. The measured trace is overlaid on the expected one, the deviation is
+   tabulated at each check frequency, and each limit line gets a measured
+   pass/FAIL.
+4. To measure an output match (S22), turn the DUT around. The VNA only
+   measures S11 and S21.
+
+What to expect from the datasheet model:
+
+| test | S21 at 1420 MHz | S11 | noise figure |
+|---|---|---|---|
+| `lna` | +19.7 dB | −17.7 dB | 0.68 dB |
+| `filter` | −3.0 dB; ≤ −24 dB at 1300/1600 MHz | not published | 3.0 dB |
+| `lna_then_filter` | +16.7 dB | −17.7 dB | 0.72 dB |
+| `filter_then_lna` | +16.7 dB | not published | 3.7 dB |
+
+The two cascades have the same gain. Only the noise figure, which the VNA
+can't see, tells them apart. That's why the order matters on the telescope
+and why the SDR test below is worth doing.
+
+### Measuring the SDR's noise figure without a noise source (`sdr_noise_*`)
+
+The RTL-SDR's noise figure at 1.4 GHz isn't published, and it decides how
+much LNA gain you need. The `sdr_noise` tests turn it into a measurement:
+
+1. Put a 50 Ω terminator on the SDR. Set AGC off and a fixed gain, tune to
+   1420 MHz, and record the average noise power in a flat part of the
+   spectrum. Stay away from the centre spike and the band edges, and average
+   for tens of seconds.
+2. With the same settings, insert terminator → LNA (powered) → filter → SDR,
+   and record again.
+3. The rise R = P₂/P₁ is predicted by Eq. 42. `expected.yaml` tabulates the
+   rise for SDR noise figures from 4 to 15 dB:
+
+| SDR noise figure | 4 dB | 6 dB | 8 dB | 10 dB | 12 dB | 15 dB |
+|---|---|---|---|---|---|---|
+| expected rise | 13.6 dB | 11.7 dB | 9.8 dB | 8.1 dB | 6.5 dB | 4.4 dB |
+
+   Eq. 43 inverts it: T_sdr = ((T_s + T_a)G_a − R·T_s)/(R − 1). T_a and G_a
+   are the LNA+filter noise temperature and gain from the file; check G_a with
+   the `lna_then_filter` VNA test first.
+
+This is a ratio of two powers at the same SDR settings, so it needs no power
+calibration. It does need the SDR to stay linear: if the rise looks too
+small, lower the SDR gain and repeat both readings. Run it for both the V3 and
+the V4 and keep the dongle with the higher noise-floor rise, which is the one
+with the lower noise figure.
 
 ---
 

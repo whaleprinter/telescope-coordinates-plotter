@@ -241,12 +241,18 @@ class TouchstoneS21:
     fmt: str                 # "DB", "MA" or "RI" -- the file's own data format
     a: np.ndarray            # first number of the S21 pair
     b: np.ndarray            # second number of the S21 pair
+    s11_a: np.ndarray | None = None   # the S11 pair (input reflection)
+    s11_b: np.ndarray | None = None
+    path: Path | None = None
 
 
 def read_touchstone_s21(path: Path) -> TouchstoneS21:
-    """S21 from a 2-port Touchstone file, as stored (Touchstone v1.1 layout:
-    ``f S11 S21 S12 S22``, two numbers each, after a ``# <unit> S <fmt> R z``
-    option line).  ``performance.s21_db`` converts it to dB."""
+    """S21 and S11 from a Touchstone file, as stored.
+
+    2-port (.s2p, v1.1 layout ``f S11 S21 S12 S22``, two numbers each) or
+    1-port (.s1p, ``f S11``; then S21 is absent).  NanoVNA-family analysers
+    measure only S11 and S21 and write zeros for S12/S22.
+    ``performance.s21_db`` converts the numbers to dB."""
     if not path.exists():
         raise HardwareConfigError(f"Touchstone file not found: {path}")
     f_mult, fmt = 1e9, "MA"                       # Touchstone defaults
@@ -263,10 +269,17 @@ def read_touchstone_s21(path: Path) -> TouchstoneS21:
                     fmt = tok
             continue
         data.extend(float(x) for x in line.split())
+    if path.suffix.lower() == ".s1p":
+        if not data or len(data) % 3:
+            raise HardwareConfigError(f"{path}: not a 1-port Touchstone file")
+        arr = np.asarray(data).reshape(-1, 3)
+        return TouchstoneS21(arr[:, 0] * f_mult, fmt, np.full(len(arr), np.nan),
+                             np.full(len(arr), np.nan), arr[:, 1], arr[:, 2], path)
     if not data or len(data) % 9:
         raise HardwareConfigError(f"{path}: not a 2-port Touchstone file")
     arr = np.asarray(data).reshape(-1, 9)
-    return TouchstoneS21(arr[:, 0] * f_mult, fmt, arr[:, 3], arr[:, 4])
+    return TouchstoneS21(arr[:, 0] * f_mult, fmt, arr[:, 3], arr[:, 4],
+                         arr[:, 1], arr[:, 2], path)
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +292,7 @@ class ComponentSpec:
     id: str
     type: str
     params: ParamSet
-    chain_position: float
+    chain_position: float | None      # None: not in the default chain (bench tests only)
     t_phys_k: float
     model: str = ""
     description: str = ""
@@ -327,6 +340,7 @@ class Environment:
     spectral_index: float
     atmosphere_k: float
     horizon_deg: float
+    source_k: float = 290.0          # bench: temperature of the 50-ohm source / terminator
 
 
 @dataclass
@@ -337,7 +351,7 @@ class Hardware:
     sweep_hz: tuple[float, float, int]
     environment: Environment
     reflector: ReflectorSpec | None
-    feed: FeedSpec
+    feed: FeedSpec | None              # None: bench-only file, no antenna
     pointing_alt_deg: float
     pointing_az_deg: float
     mount_type: str
@@ -350,6 +364,15 @@ class Hardware:
     assumptions: list[str] = field(default_factory=list)
     placeholders: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    components: dict[str, ComponentSpec] = field(default_factory=dict)  # every enabled part
+    instrument: ParamSet | None = None   # the VNA, for bench tests
+    instrument_model: str = ""
+    bench_tests: list["BenchTest"] = field(default_factory=list)
+    check_freqs_hz: list[float] = field(default_factory=list)
+
+    @property
+    def has_antenna(self) -> bool:
+        return self.feed is not None
 
     @property
     def order(self) -> list[str]:
@@ -381,12 +404,12 @@ def _component(raw: dict, *, index: int, base_dir: Path, default_t_phys_k: float
                center_hz: float) -> ComponentSpec:
     cid = str(raw.get("id") or f"component_{index}")
     ctype = str(raw.get("type") or "").strip().lower()
-    if raw.get("chain_position") is None:
-        raise HardwareConfigError(f"component {cid!r}: chain_position is required")
     params = ParamSet.from_yaml(cid, raw.get("parameters"), base_dir)
     s21 = read_touchstone_s21(base_dir / raw["sparameters"]) if raw.get("sparameters") else None
     return ComponentSpec(
-        id=cid, type=ctype, params=params, chain_position=float(raw["chain_position"]),
+        id=cid, type=ctype, params=params,
+        chain_position=(None if raw.get("chain_position") is None
+                        else float(raw["chain_position"])),
         t_phys_k=params.number("physical_temperature", "K", default_t_phys_k),
         model=str(raw.get("model") or ""), description=str(raw.get("description") or ""),
         s21=s21, center_hz=center_hz)
@@ -462,7 +485,16 @@ def load_hardware(path: str | Path | None = None, *, data: dict | None = None,
     assumptions: list[str] = []
     warnings: list[str] = []
 
-    an = ParamSet.from_yaml("analysis", data.get("analysis"), base)
+    an_raw = dict(data.get("analysis") or {})
+    cf = an_raw.pop("check_frequencies", None)
+    check_freqs: list[float] = []
+    if cf is not None:
+        if not isinstance(cf, dict) or not isinstance(cf.get("value"), list):
+            raise HardwareConfigError("analysis.check_frequencies must be "
+                                      "{value: [f1, f2, ...], unit: MHz}")
+        check_freqs = [convert(v, str(cf.get("unit") or "MHz"),
+                               where="analysis.check_frequencies")[0] for v in cf["value"]]
+    an = ParamSet.from_yaml("analysis", an_raw, base)
     center = an.number("center_freq", "Hz", 1_420_405_751.768)
     sweep = (an.number("sweep_min", "Hz", center - 40e6),
              an.number("sweep_max", "Hz", center + 40e6),
@@ -481,19 +513,18 @@ def load_hardware(path: str | Path | None = None, *, data: dict | None = None,
         atmosphere_k=env_ps.number("atmosphere_temperature", "K", 2.0),
         horizon_deg=env_ps.number("horizon_elevation", "deg", 0.0),
     )
+    env.source_k = env_ps.number("source_temperature", "K", env.ambient_k)
     placeholders = [f"environment.{n}" for n in env_ps.placeholders()]
 
     structure: dict[str, ParamSet] = {}
-    chain: list[ComponentSpec] = []
+    components: dict[str, ComponentSpec] = {}
     disabled: list[str] = []
-    seen: set[str] = set()
     for i, raw in enumerate(data.get("components") or []):
         if not isinstance(raw, dict):
             raise HardwareConfigError(f"components[{i}] must be a mapping")
         cid = str(raw.get("id") or f"component_{i}")
-        if cid in seen:
+        if cid in components or cid in disabled or cid in {ps.owner for ps in structure.values()}:
             raise HardwareConfigError(f"two components are called {cid!r}")
-        seen.add(cid)
         ctype = str(raw.get("type") or "").strip().lower()
         enabled = raw.get("enabled", True) is not False
         if ctype not in CHAIN_TYPES | STRUCTURE_TYPES:
@@ -511,25 +542,41 @@ def load_hardware(path: str | Path | None = None, *, data: dict | None = None,
             continue
         comp = _component(raw, index=i, base_dir=base, default_t_phys_k=env.ambient_k,
                           center_hz=center)
-        chain.append(comp)
+        components[cid] = comp
         placeholders += [f"{cid}.{n}" for n in comp.params.placeholders()]
 
+    bench_tests = [_bench_test(raw, k, components, base)
+                   for k, raw in enumerate(data.get("bench_tests") or [])]
+    reflector = _reflector(structure["reflector"], assumptions) if "reflector" in structure else None
+    if "feed" in structure:
+        feed = _feed(structure["feed"], reflector is not None, env.ambient_k, assumptions)
+    elif reflector is not None:
+        raise HardwareConfigError("a reflector needs a feed component (type: feed)")
+    elif not bench_tests:
+        raise HardwareConfigError(
+            "a feed component is required (type: feed) -- or, for a bench-only "
+            "file with no antenna, add a bench_tests list")
+    else:
+        feed = None
+
+    # The default chain: every enabled part with a chain_position (or --order).
     if order:
-        by_id = {c.id: c for c in chain}
-        missing = [o for o in order if o not in by_id]
+        missing = [o for o in order if o not in components]
         if missing:
             raise HardwareConfigError(
                 f"--order names {', '.join(missing)}, which "
                 f"{'is' if len(missing) == 1 else 'are'} not enabled chain "
-                f"components (have: {', '.join(by_id)})")
-        left_out = [c.id for c in chain if c.id not in order]
+                f"components (have: {', '.join(components)})")
+        left_out = [c for c, v in components.items()
+                    if v.chain_position is not None and c not in order]
         if left_out:
             warnings.append(f"--order left out {', '.join(left_out)}; "
                             f"they are dropped from this run")
-        chain = [by_id[o] for o in order]
+        chain = [components[o] for o in order]
         for pos, c in enumerate(chain, 1):
             c.chain_position = float(pos)
     else:
+        chain = [c for c in components.values() if c.chain_position is not None]
         positions = [c.chain_position for c in chain]
         dup = sorted({x for x in positions if positions.count(x) > 1})
         if dup:
@@ -537,30 +584,35 @@ def load_hardware(path: str | Path | None = None, *, data: dict | None = None,
                 f"chain_position {', '.join(str(int(d)) for d in dup)} is "
                 f"used by more than one component")
         chain.sort(key=lambda c: c.chain_position)
-    if not chain:
-        raise HardwareConfigError("no enabled RF-chain components")
+    if feed is not None and not chain:
+        raise HardwareConfigError("no enabled RF-chain components with a chain_position")
     sdr_idx = [i for i, c in enumerate(chain) if c.type == "sdr"]
-    if not sdr_idx:
-        warnings.append("no SDR in the chain: T_rec ignores the digitiser's noise")
-    elif sdr_idx[-1] != len(chain) - 1:
-        warnings.append(f"{chain[sdr_idx[-1]].id} is not the last component; anything "
-                        f"after the SDR is already digital and has no analog effect")
-
-    reflector = _reflector(structure["reflector"], assumptions) if "reflector" in structure else None
-    if "feed" not in structure:
-        raise HardwareConfigError("a feed component is required (type: feed)")
-    feed = _feed(structure["feed"], reflector is not None, env.ambient_k, assumptions)
+    if feed is not None:
+        if not sdr_idx:
+            warnings.append("no SDR in the chain: T_rec ignores the digitiser's noise")
+        elif sdr_idx[-1] != len(chain) - 1:
+            warnings.append(f"{chain[sdr_idx[-1]].id} is not the last component; anything "
+                            f"after the SDR is already digital and has no analog effect")
     mount = structure.get("mount", ParamSet("mount"))
 
     sdr = chain[sdr_idx[-1]] if sdr_idx else None
     fft = sdr.params.number("fft_size", "") if sdr else None
     chan = sdr.params.number("channel_width", "Hz") if sdr else None
-    if sdr is None or (fft is None and chan is None):
+    if feed is not None and (sdr is None or (fft is None and chan is None)):
         chan = 5e3
         assumptions.append("no SDR fft_size/channel_width: assumed 5 kHz channels")
     n_pol = int(sdr.params.number("n_pol", "", 1)) if sdr else 1
     if n_pol not in (1, 2):
         raise HardwareConfigError("n_pol must be 1 or 2")
+
+    inst_raw = data.get("instrument")
+    instrument = (ParamSet.from_yaml("instrument", inst_raw.get("parameters"), base)
+                  if isinstance(inst_raw, dict) else None)
+    if instrument is not None:
+        placeholders += [f"instrument.{n}" for n in instrument.placeholders()]
+    if bench_tests and any(t.type == "vna" for t in bench_tests) and instrument is None:
+        warnings.append("vna bench tests but no 'instrument' block: power-level and "
+                        "dynamic-range checks are skipped")
 
     return Hardware(
         name=str((data.get("meta") or {}).get("name") or "unnamed telescope"),
@@ -572,7 +624,103 @@ def load_hardware(path: str | Path | None = None, *, data: dict | None = None,
         fft_size=fft, channel_width_hz=chan, n_pol=n_pol,
         k_s=sdr.params.number("radiometer_factor", "", 1.0) if sdr else 1.0,
         assumptions=assumptions, placeholders=placeholders, warnings=warnings,
+        components=components, instrument=instrument,
+        instrument_model=str(inst_raw.get("model") or "") if isinstance(inst_raw, dict) else "",
+        bench_tests=bench_tests, check_freqs_hz=check_freqs,
     )
+
+
+# ---------------------------------------------------------------------------
+# bench tests (no antenna: components on a VNA, or into an SDR)
+# ---------------------------------------------------------------------------
+BENCH_TYPES = {"vna", "sdr_noise"}
+
+
+@dataclass
+class Limit:
+    """A datasheet pass/fail line: on [lo, hi], the quantity must lie in [min_db, max_db]."""
+
+    quantity: str            # "s21" or "s11"
+    lo_hz: float
+    hi_hz: float
+    min_db: float | None
+    max_db: float | None
+    notes: str = ""
+
+
+@dataclass
+class BenchTest:
+    id: str
+    type: str                          # "vna" or "sdr_noise"
+    chain: list[ComponentSpec]
+    description: str = ""
+    measured: Path | None = None       # a .s2p/.s1p exported by the VNA, if you have one
+    limits: list[Limit] = field(default_factory=list)
+    reference: list[ComponentSpec] = field(default_factory=list)   # sdr_noise only
+    #: parts in the signal path that the VNA's thru calibration removes from
+    #: the displayed trace (e.g. a protective pad after an LNA)
+    calibrated_out: list[str] = field(default_factory=list)
+
+    @property
+    def order(self) -> list[str]:
+        return [c.id for c in self.chain]
+
+
+def _ids(raw, where: str, components: dict[str, ComponentSpec]) -> list[ComponentSpec]:
+    if isinstance(raw, str):
+        raw = [x.strip() for x in raw.split(",")]
+    if not isinstance(raw, list) or not raw:
+        raise HardwareConfigError(f"{where} must be a list of component ids")
+    missing = [x for x in raw if x not in components]
+    if missing:
+        raise HardwareConfigError(
+            f"{where} names {', '.join(map(str, missing))}, which "
+            f"{'is' if len(missing) == 1 else 'are'} not an enabled RF component "
+            f"(have: {', '.join(components)})")
+    return [components[x] for x in raw]
+
+
+def _bench_test(raw: dict, k: int, components: dict[str, ComponentSpec],
+                base: Path) -> BenchTest:
+    if not isinstance(raw, dict):
+        raise HardwareConfigError(f"bench_tests[{k}] must be a mapping")
+    tid = str(raw.get("id") or f"test_{k}")
+    ttype = str(raw.get("type") or "vna").strip().lower()
+    if ttype not in BENCH_TYPES:
+        raise HardwareConfigError(f"bench test {tid!r}: type must be one of "
+                                  f"{', '.join(sorted(BENCH_TYPES))}")
+    chain = _ids(raw.get("chain"), f"bench test {tid!r}: chain", components)
+    reference: list[ComponentSpec] = []
+    if ttype == "sdr_noise":
+        if chain[-1].type != "sdr":
+            raise HardwareConfigError(f"bench test {tid!r}: an sdr_noise chain must end "
+                                      f"in an SDR")
+        reference = (_ids(raw["reference"], f"bench test {tid!r}: reference", components)
+                     if raw.get("reference") else [chain[-1]])
+    limits = []
+    for j, lim in enumerate(raw.get("limits") or []):
+        where = f"bench test {tid!r}: limits[{j}]"
+        if not isinstance(lim, dict) or "freq_mhz" not in lim:
+            raise HardwareConfigError(f"{where} needs freq_mhz (a value or [low, high])")
+        f = lim["freq_mhz"]
+        lo, hi = (f, f) if not isinstance(f, (list, tuple)) else (f[0], f[-1])
+        q = str(lim.get("quantity") or "s21").lower()
+        if q not in {"s21", "s11"}:
+            raise HardwareConfigError(f"{where}: quantity must be s21 or s11")
+        mn, mx = lim.get("min_db"), lim.get("max_db")
+        if mn is None and mx is None:
+            raise HardwareConfigError(f"{where}: give min_db and/or max_db")
+        limits.append(Limit(q, float(lo) * 1e6, float(hi) * 1e6,
+                            None if mn is None else float(mn),
+                            None if mx is None else float(mx), str(lim.get("notes") or "")))
+    measured = base / str(raw["measured"]) if raw.get("measured") else None
+    cal_out = [c.id for c in _ids(raw["calibrated_out"], f"bench test {tid!r}: calibrated_out",
+                                  components)] if raw.get("calibrated_out") else []
+    if any(c not in [x.id for x in chain] for c in cal_out):
+        raise HardwareConfigError(f"bench test {tid!r}: calibrated_out must name parts "
+                                  f"that are in its chain")
+    return BenchTest(tid, ttype, chain, str(raw.get("description") or ""), measured,
+                     limits, reference, cal_out)
 
 
 # ---------------------------------------------------------------------------
