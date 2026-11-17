@@ -20,6 +20,24 @@ another's result, it reads a file the other wrote.
  outputs/  (pointing track, transits, detectability, figures, report)
 ```
 
+### Poster figures
+
+```bash
+python3 poster_figures.py            # both; or: python3 poster_figures.py sky | hardware
+```
+
+Redraws two figures in the Fall 2026 poster's style (`../Capability Calculator/Fall 2026 Poster/poster_style.py`),
+using the same calculations as the programs above. It does not change them or their outputs.
+
+| poster figure | poster version of |
+|---|---|
+| `sky_galactic` | `outputs/02_sky_galactic.png` (same catalogue as the last `run.py`) |
+| `hardware_response` | chain gain, simulated vs the NanoVNA chain sweeps in `../NanoVNA/Parts_Verification/` (LNA → filter and filter → LNA, no cables yet; `--pad-db` adds the 30 dB pad back) |
+
+Each is saved to `outputs/poster/` (PDF + PNG) and `../Fall 2026 Poster/figures/` (PDF;
+`--no-poster` skips that). `--font-pt`, `--span LO HI`, `--labels N` tune them, and any other
+flag goes to hydroline (e.g. `--offline`, `--antenna dish-3m`). `-h` lists everything.
+
 hydroline can also run without hardware_model: it then uses one of its preset
 antennas or the antenna in `config.example.yaml`.
 
