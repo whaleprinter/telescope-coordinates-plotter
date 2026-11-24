@@ -1,0 +1,217 @@
+# bench_parameters.yaml -- expected VNA and SDR readings for the parts on the bench
+#
+#   python3 hardware_model/compute_performance.py hardware_model/bench_parameters.yaml
+#
+# No antenna: each test drives a chain of components from a 50-ohm source
+# (the VNA's port 1, or a 50-ohm terminator into the SDR). The program writes,
+# per test, the S21/S11 traces you should see, the datasheet pass/fail lines,
+# the drive levels through the chain, and -- once you export a .s2p from the
+# VNA and point `measured:` at it -- the deviation from expectation.
+# Outputs: hardware_model/output/bench/<test id>/
+#
+# Same format as hardware_parameters.yaml: name: {value, unit, status, notes}.
+# Every number below cites where it came from. "estimate" and "placeholder"
+# entries are listed in every output so you know what rests on a guess.
+#
+# !! BEFORE YOU POWER ANYTHING -- read the "Safety" section of README.md:
+#    * ZX60-P162LN+ runs on +4.0 V (3.8-4.2 V) on its V+ pin. 5.5 V is the
+#      DAMAGE limit, not the operating voltage.
+#    * Keep the RTL-SDR bias tee OFF. It puts 4.5 V DC on the SMA, and the
+#      GPIO Labs filter is destroyed by DC on either port.
+#    * The NanoVNA's safe input level is not published: pad the LNA output.
+
+meta:
+  name: Bench validation -- LNA, filter, SDR on a NanoVNA-F V2
+
+analysis:
+  center_freq:  {value: 1420.405751768, unit: MHz, notes: HI rest frequency}
+  # Set the VNA to the same sweep so its export lines up point for point:
+  # START 1000 MHz, STOP 1800 MHz, 201 points (the NanoVNA-F V2 maximum).
+  sweep_min:    {value: 1000, unit: MHz}
+  sweep_max:    {value: 1800, unit: MHz}
+  sweep_points: {value: 201, unit: ""}
+  # Frequencies tabulated in every expected.yaml (put VNA markers here).
+  check_frequencies: {value: [1000, 1300, 1395, 1420.406, 1445, 1600], unit: MHz}
+
+environment:
+  ambient_temperature: {value: 295, unit: K, status: estimate, notes: lab room}
+  # Temperature of the 50-ohm terminator in the SDR noise tests.
+  source_temperature:  {value: 295, unit: K, status: estimate, notes: room-temperature load}
+
+# The VNA is the instrument, not a part of the chain.
+instrument:
+  model: Sysjoint NanoVNA-F V2
+  parameters:
+    freq_min:          {value: 0.05, unit: MHz, notes: Radioddity spec table}
+    freq_max:          {value: 3000, unit: MHz, notes: Radioddity spec table}
+    # Port-1 output power is a step function of frequency (Radioddity table:
+    # -10 dBm to 140 MHz, -9 dBm to 1 GHz, -12 dBm to 2 GHz, -14 dBm to 3 GHz).
+    output_power:      {unit: dBm, freq_unit: MHz, notes: "Radioddity; WiMo gives -14 to -9 dBm",
+                        curve: [[140, -9], [999, -9], [1000, -12], [1999, -12], [2000, -14], [3000, -14]]}
+    s21_dynamic_range: {unit: dB, freq_unit: MHz, notes: "70 dB to 1.5 GHz, 60 dB above (Radioddity); marketing text says 80",
+                        curve: [[1499, 70], [1500, 60]]}
+    s11_dynamic_range: {unit: dB, freq_unit: MHz, notes: "50 dB to 1.5 GHz, 40 dB above (Radioddity)",
+                        curve: [[1499, 50], [1500, 40]]}
+    max_input_power:   {value: 0, unit: dBm, status: placeholder,
+                        notes: "NOT PUBLISHED in any source found; conservative guess -- check with the vendor"}
+    measures:          {value: "S11 and S21 only (port 1 transmits); reverse a DUT to see its S22"}
+
+components:
+
+  # ------------------------------------------------------------------ LNA
+  # Mini-Circuits ZX60-P162LN+ datasheet, Rev. E (ECO-017292):
+  # "Typical performance data" table at +4 V, 25 C, 700-1600 MHz.
+  - id: lna
+    type: amplifier
+    model: Mini-Circuits ZX60-P162LN+
+    parameters:
+      freq_min:          {value: 700, unit: MHz, notes: datasheet frequency range}
+      freq_max:          {value: 1600, unit: MHz, notes: datasheet frequency range}
+      gain:              {unit: dB, freq_unit: MHz, notes: typical performance table at +4 V,
+                          curve: [[700, 24.09], [800, 23.78], [900, 23.17], [1000, 22.49], [1100, 21.81],
+                                  [1200, 21.12], [1300, 20.46], [1400, 19.81], [1500, 19.16], [1600, 18.53]]}
+      noise_figure:      {unit: dB, freq_unit: MHz, notes: "typical table (0.1 dB resolution); max 0.95 dB at 1 GHz",
+                          curve: [[700, 0.7], [800, 0.5], [900, 0.6], [1000, 0.5], [1100, 0.6],
+                                  [1200, 0.6], [1300, 0.6], [1400, 0.7], [1500, 0.6], [1600, 0.7]]}
+      input_vswr:        {unit: ":1", freq_unit: MHz, notes: typical table,
+                          curve: [[700, 2.19], [800, 1.64], [900, 1.35], [1000, 1.19], [1100, 1.09],
+                                  [1200, 1.16], [1300, 1.23], [1400, 1.29], [1500, 1.34], [1600, 1.40]]}
+      output_vswr:       {unit: ":1", freq_unit: MHz, notes: typical table,
+                          curve: [[700, 1.58], [800, 1.43], [900, 1.37], [1000, 1.38], [1100, 1.44],
+                                  [1200, 1.53], [1300, 1.65], [1400, 1.80], [1500, 1.95], [1600, 2.13]]}
+      p1db_output:       {unit: dBm, freq_unit: MHz, notes: typical table,
+                          curve: [[700, 19.2], [800, 19.9], [900, 20.0], [1000, 19.9], [1100, 19.9],
+                                  [1200, 20.2], [1300, 19.7], [1400, 19.6], [1500, 19.3], [1600, 19.5]]}
+      oip3:              {value: 29.8, unit: dBm, notes: typical at 1400 MHz}
+      rolloff:           {value: 12, unit: dB, status: estimate,
+                          notes: "dB/octave outside 0.7-1.6 GHz: NOT in the datasheet (model assumption, Eq. 8)"}
+      max_input_power:   {value: 25, unit: dBm, notes: "absolute max, no damage, at Vd = +4 V"}
+      supply_voltage:    {value: 4.0, unit: V, notes: "+3.8 min / +4.2 max operating; +5.5 V is the DAMAGE limit"}
+      supply_current:    {value: 0.052, unit: A, notes: "44-60 mA"}
+      physical_temperature: {value: 295, unit: K, status: estimate}
+
+  # ----------------------------------------------------------- filter
+  # GPIO Labs 1420 MHz bandpass filter, Tindie listing (no separate datasheet):
+  # passband "1420 +/- 25 MHz", "typical insertion loss of 3 dB", minimum
+  # attenuation 24 dB at 1300 and 1600 MHz, "+10 dBm" max, DC destroys it.
+  - id: bandpass_filter
+    type: filter
+    model: GPIO Labs 1420 MHz BPF
+    parameters:
+      center_freq:       {value: 1420, unit: MHz, notes: listing}
+      bandwidth:         {value: 50, unit: MHz, notes: "listing: passband 1420 +/- 25 MHz (whether these are -3 dB points is not stated)"}
+      insertion_loss:    {value: 3.0, unit: dB, notes: "typical; no maximum published"}
+      response:          {value: butterworth, status: estimate,
+                          notes: filter technology and response shape are not published}
+      order:             {value: 2, unit: "", status: estimate,
+                          notes: "lowest Butterworth order that meets 24 dB at 1300 and 1600 MHz (gives 28 and 33 dB)"}
+      out_of_band_rejection: {value: 50, unit: dB, status: placeholder,
+                              notes: "stopband floor not published; the VNA shows the real one"}
+      max_input_power:   {value: 10, unit: dBm, notes: listing}
+      physical_temperature: {value: 295, unit: K, status: estimate}
+
+  # ----------------------------------------------- protective attenuator
+  # Goes between the LNA and VNA port 2. It is included in the THRU
+  # calibration (calibrated_out below), so the trace shows the LNA alone.
+  # Any 20 dB SMA attenuator rated >= +20 dBm will do.
+  - id: pad_20db
+    type: attenuator
+    model: 20 dB SMA attenuator (any)
+    parameters:
+      loss:              {value: 20, unit: dB, status: estimate, notes: nominal}
+      max_input_power:   {value: 30, unit: dBm, status: estimate, notes: "typical 1-2 W pad; check yours"}
+
+  # -------------------------------------------------------------- SDRs
+  # Neither RTL-SDR has a published noise figure. The estimates below come
+  # from (a) "Tech-ni-shn" bench notes: V3 ~4 dB, V4 ~8 dB NF at 136 MHz
+  # (uncalibrated, indicative), and (b) the RTL-SDR Blog V4 datasheet MDS
+  # plot: V3 sensitivity ~8 dB worse at 1.4 GHz than at 136 MHz, and the V4
+  # ~3 dB worse than the V3 above 1 GHz. The sdr_noise tests below MEASURE it.
+  - id: rtlsdr_v3
+    type: sdr
+    model: RTL-SDR Blog V3 (R820T2)
+    parameters:
+      freq_min:          {value: 0.5, unit: MHz, notes: V3 datasheet}
+      freq_max:          {value: 1766, unit: MHz, notes: V3 datasheet}
+      sample_rate:       {value: 2.4, unit: MHz, notes: "V3 datasheet: up to 2.4 MHz stable"}
+      adc_bits:          {value: 8, unit: bit, notes: RTL2832U}
+      noise_figure:      {value: 12, unit: dB, status: estimate,
+                          notes: "not published; ~4 dB at 136 MHz + ~8 dB to 1.4 GHz -- measure with sdr_noise_v3"}
+      fft_size:          {value: 1024, unit: ""}
+      bias_tee:          {value: "4.5 V, 180 mA, software switchable -- KEEP OFF on the bench"}
+
+  - id: rtlsdr_v4
+    type: sdr
+    model: RTL-SDR Blog V4 (R828D)
+    parameters:
+      freq_min:          {value: 0.5, unit: MHz, notes: V4 datasheet}
+      freq_max:          {value: 1766, unit: MHz, notes: V4 datasheet}
+      sample_rate:       {value: 2.56, unit: MHz, notes: "V4 datasheet: 2.56 MHz stable (3.2 with drops)"}
+      adc_bits:          {value: 8, unit: bit, notes: RTL2832U}
+      noise_figure:      {value: 15, unit: dB, status: estimate,
+                          notes: "not published; V3 estimate + ~3 dB from the V4 datasheet MDS plot -- measure with sdr_noise_v4"}
+      fft_size:          {value: 1024, unit: ""}
+      bias_tee:          {value: "4.5 V, 180 mA, software switchable -- KEEP OFF on the bench"}
+
+# ---------------------------------------------------------------- the tests
+# type vna:       S21/S11 of `chain` between VNA port 1 and port 2.
+# type sdr_noise: 50-ohm terminator -> `chain` (ending in an SDR), compared
+#                 with the same terminator -> `reference` (default: the SDR
+#                 alone). Gives the noise-floor rise to expect, and turns your
+#                 measured rise into the SDR's noise figure (Eq. 43).
+# limits:   pass/fail lines, {freq_mhz: f or [lo, hi], min_db, max_db,
+#           quantity: s21 | s11}. Datasheet-guaranteed lines say so; anything
+#           else is an acceptance line chosen here, and says so.
+# measured: path (relative to this file) of a .s2p/.s1p exported from the
+#           VNA. Leave it as is until you have the file.
+bench_tests:
+
+  - id: lna
+    type: vna
+    description: LNA alone, +4.0 V on V+, 20 dB pad on the output included in the thru cal
+    chain: [lna, pad_20db]
+    calibrated_out: [pad_20db]
+    measured: measured/lna.s2p
+    limits:
+      - {freq_mhz: 1000, min_db: 20.9, max_db: 24.5, notes: datasheet-guaranteed gain at 1.0 GHz}
+      - {freq_mhz: [1300, 1600], quantity: s11, max_db: -9.5,
+         notes: "acceptance line chosen here (2:1 VSWR); datasheet typ. 1.23-1.40:1"}
+
+  - id: filter
+    type: vna
+    description: GPIO Labs filter alone (no DC on either port!)
+    chain: [bandpass_filter]
+    measured: measured/filter.s2p
+    limits:
+      - {freq_mhz: 1300, max_db: -24, notes: "datasheet minimum attenuation 24 dB"}
+      - {freq_mhz: 1600, max_db: -24, notes: "datasheet minimum attenuation 24 dB"}
+      - {freq_mhz: [1405, 1435], min_db: -4.0,
+         notes: "insertion loss typ. 3 dB, no max published; 1 dB allowance chosen here"}
+
+  - id: lna_then_filter
+    type: vna
+    description: LNA -> filter (the planned order), pad on the output in the thru cal
+    chain: [lna, bandpass_filter, pad_20db]
+    calibrated_out: [pad_20db]
+    measured: measured/lna_then_filter.s2p
+    limits:
+      - {freq_mhz: [1405, 1435], min_db: 14.5, notes: "LNA typ. 19.8 dB - filter typ. 3 dB, less 2.3 dB allowance chosen here"}
+
+  - id: filter_then_lna
+    type: vna
+    description: filter -> LNA (the other order), for comparison
+    chain: [bandpass_filter, lna, pad_20db]
+    calibrated_out: [pad_20db]
+    measured: measured/filter_then_lna.s2p
+
+  - id: sdr_noise_v3
+    type: sdr_noise
+    description: 50-ohm load -> LNA -> filter -> RTL-SDR V3, vs 50-ohm load -> RTL-SDR V3 (AGC off, same gain)
+    chain: [lna, bandpass_filter, rtlsdr_v3]
+    reference: [rtlsdr_v3]
+
+  - id: sdr_noise_v4
+    type: sdr_noise
+    description: 50-ohm load -> LNA -> filter -> RTL-SDR V4, vs 50-ohm load -> RTL-SDR V4 (AGC off, same gain)
+    chain: [lna, bandpass_filter, rtlsdr_v4]
+    reference: [rtlsdr_v4]
