@@ -9,7 +9,7 @@
 This is a thin layer on top of the two programs: it computes everything with
 the same functions run.py and hardware_model/compute_performance.py use (same
 config, same catalogue cache, same parts list) and only redraws the result
-with the poster's style (../Capability Calculator/Fall 2026 Poster/poster_style.py): its fonts,
+with the poster's style (../Duke-Radio-Telescope/posters/fall-2026/poster_style.py): its fonts,
 colours, transparent background and real-size type.
 
 Figures                                      (poster version of)
@@ -17,7 +17,7 @@ Figures                                      (poster version of)
   hardware_response     LNA + filter, sim vs NanoVNA      hardware_model/output/frequency_response.png
 
 Each is written as  outputs/poster/<name>.pdf  and  .png  here, and as
-../Capability Calculator/Fall 2026 Poster/figures/<name>.pdf  for LaTeX (skip that with --no-poster).
+../Duke-Radio-Telescope/posters/fall-2026/figures/<name>.pdf  for LaTeX (skip that with --no-poster).
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ import warnings
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-POSTER_DIR = HERE.parent / "Capability Calculator" / "Fall 2026 Poster"
+POSTER_DIR = HERE.parent / "Duke-Radio-Telescope" / "posters" / "fall-2026"
 POSTER_FIG_DIR = POSTER_DIR / "figures"
 LOCAL_DIR = HERE / "outputs" / "poster"
 HARDWARE_FILE = HERE / "hardware_model" / "hardware_parameters.yaml"

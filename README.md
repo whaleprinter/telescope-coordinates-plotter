@@ -26,7 +26,7 @@ another's result, it reads a file the other wrote.
 python3 poster_figures.py            # both; or: python3 poster_figures.py sky | hardware
 ```
 
-Redraws two figures in the Fall 2026 poster's style (`../Capability Calculator/Fall 2026 Poster/poster_style.py`),
+Redraws two figures in the Fall 2026 poster's style (`../Duke-Radio-Telescope/posters/fall-2026/poster_style.py`),
 using the same calculations as the programs above. It does not change them or their outputs.
 
 | poster figure | poster version of |
