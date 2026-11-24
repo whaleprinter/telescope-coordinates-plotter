@@ -46,6 +46,17 @@ from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 import poster_style as ps  # noqa: E402
 
+# Printed width of one poster column (\linewidth, measured from the LaTeX
+# log: 1053.9 pt).  poster_style.figsize() counts in fractions of its own
+# 32.6 cm block width, so this converts "x of the column" into that fraction,
+# letting each figure be drawn at the exact size it prints (fonts at true size).
+COLUMN_IN = 37.04 / 2.54
+
+
+def col_frac(frac_of_column: float) -> float:
+    return frac_of_column * COLUMN_IN / ps.BLOCK_WIDTH_IN
+
+
 GOLD = "#C98500"   # near-miss sources: the one extra colour, off the poster's palette
 
 
@@ -131,7 +142,7 @@ def plot_sky_galactic(model, track, det, font_pt: float, aspect: float, width: f
     ax.set_xticklabels([])
     ax.set_yticks(np.radians([-60, -30, 0, 30, 60]))
     ax.set_yticklabels(["−60°", "−30°", "", "+30°", "+60°"], color=ps.INKSOFT,
-                       fontsize=font_pt * 0.75)
+                       fontsize=font_pt * 0.82)
     for sp in ax.spines.values():
         sp.set_edgecolor(ps.INKSOFT)
 
@@ -173,7 +184,7 @@ def plot_sky_galactic(model, track, det, font_pt: float, aspect: float, width: f
     rank = lambda t: (t[1] != "Cygnus A", -np.nan_to_num(det["hi_flux_jykms"].iloc[t[0]]))
     named.sort(key=rank)
     _place_labels(ax, [(x[i], y[i], n, ps.NAVY) for i, n in named[:args_max_labels]],
-                  fontsize=font_pt * 0.75, weight="semibold")
+                  fontsize=font_pt * 0.82, weight="semibold")
     import matplotlib.patheffects as pe
     for t in ax.texts:                              # white halo so names read over the track
         t.set_path_effects([pe.withStroke(linewidth=4, foreground="white")])
@@ -193,14 +204,14 @@ def plot_sky_galactic(model, track, det, font_pt: float, aspect: float, width: f
         Line2D([], [], marker="D", ls="none", mfc=ps.RUST, mec="white", ms=10,
                label="HI galaxy in beam"),
         Line2D([], [], marker="*", ls="none", mfc=ps.NAVY, mec="white", ms=20,
-               label="Milky Way crossing (l ≈ "
+               label="Milky Way crossing (ℓ ≈ "
                      + ", ".join(f"{v:.0f}°" for v in sorted(cross_l)) + ")"),
     ]
     if (status == "near miss").any():
         handles.append(Line2D([], [], marker="o", ls="none", mfc=GOLD, mec="white", ms=12,
                               label="near miss"))
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.03), ncol=2,
-              fontsize=font_pt * 0.75, handletextpad=0.4, columnspacing=1.5)
+              fontsize=font_pt * 0.82, handletextpad=0.4, columnspacing=1.5)
     ax.set_xlabel("")
     return fig
 
@@ -274,7 +285,7 @@ def plot_hardware_response(perf, hw, font_pt: float, aspect: float, width: float
         # numbers at the HI line, centred between the filter skirts
         ax.text(0.5, 0.06, f"at {hi:.1f} MHz\nsim {g_sim:.1f} dB, meas {g_meas:.1f} dB",
                 transform=ax.transAxes, ha="center", va="bottom", color=ps.INK,
-                fontsize=font_pt * 0.68, linespacing=1.15,
+                fontsize=font_pt * 0.82, linespacing=1.15,
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.9))
         ps.title(ax, title)
 
@@ -285,12 +296,12 @@ def plot_hardware_response(perf, hw, font_pt: float, aspect: float, width: float
     for ax in axes:
         ax.axvline(hi, color=ps.INKSOFT, lw=1.2, ls=":")
         ax.set_xlim(*span_mhz)
-        ax.set_ylim(top - 30, top + 12)
+        ax.set_ylim(top - 30, top + 17)
         ax.set_xlabel("Frequency (MHz)")
         ax.xaxis.set_major_locator(MultipleLocator(100))
         ax.xaxis.set_minor_locator(MultipleLocator(50))
     a_lf.set_ylabel("Gain (dB)")
-    a_lf.legend(loc="upper left", fontsize=font_pt * 0.7, handlelength=1.6,
+    a_lf.legend(loc="upper left", fontsize=font_pt * 0.82, handlelength=1.6,
                   borderaxespad=0.3)
     return fig
 
@@ -328,13 +339,13 @@ def main() -> int:
     if "sky" in which:
         print("== galactic sky map (hydroline) ==")
         model, track, det = hydroline_data(hydroline_argv)
-        fig = plot_sky_galactic(model, track, det, args.font_pt, aspect=0.6, width=1.0,
+        fig = plot_sky_galactic(model, track, det, args.font_pt, aspect=0.6, width=col_frac(0.6),
                                 args_max_labels=args.labels)
         written += save(fig, "sky_galactic", not args.no_poster)
     if "hardware" in which:
         print("== receiver chain response (hardware_model) ==")
         perf, hw = hardware_data(args.hardware_file)
-        fig = plot_hardware_response(perf, hw, args.font_pt, aspect=0.32, width=1.0,
+        fig = plot_hardware_response(perf, hw, args.font_pt, aspect=0.32, width=col_frac(0.85),
                                      span_mhz=tuple(args.span), pad_db=args.pad_db)
         written += save(fig, "hardware_response", not args.no_poster)
 
